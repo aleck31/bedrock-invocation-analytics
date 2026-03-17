@@ -21,8 +21,6 @@ Bedrock API 调用 → 调用日志 → S3 (JSON.gz) → Athena (SQL 查询)
 
 ## 部署
 
-> **注意：** 请将下方 `aleck31/bedrock-logging-analytics/main` 替换为你的实际 GitHub 仓库路径。
-
 | 区域 | 部署 |
 |------|------|
 | us-west-2 (俄勒冈) | [![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/create/review?stackName=bedrock-logging-analytics&templateURL=https://raw.githubusercontent.com/aleck31/bedrock-logging-analytics/main/cf-deploy-template.yaml) |
@@ -136,6 +134,39 @@ WHERE datehour >= '2026/03/17/00' AND datehour <= '2026/03/17/23'
 -- 最近 7 天
 WHERE datehour >= date_format(date_add('day', -7, now()), '%Y/%m/%d/%H')
 ```
+
+## Web UI（可选）
+
+基于 Streamlit 的可视化仪表盘，用于展示 Bedrock 使用量和费用。
+
+![WebUI 截图](webui_screenshot.png)
+
+### 快速启动
+
+```bash
+cd webui
+uv sync
+uv run streamlit run app.py
+```
+
+浏览器打开 http://localhost:8501
+
+### 功能
+
+- 汇总卡片：总调用次数、Input/Output Tokens、估算费用
+- 按模型的 Token 消耗和费用图表
+- 按调用者（IAM 用户/角色）的 Token 消耗和费用图表
+- 按天和按小时的趋势图
+- 延迟分析（min/avg/max）及高延迟调用检测
+
+### 配置
+
+通过左侧边栏配置：
+- AWS Profile
+- Region
+- Athena Workgroup 名称
+- Athena Database 名称
+- 时间范围（1 天 / 7 天 / 30 天 / 90 天）
 
 ## CLI 部署
 

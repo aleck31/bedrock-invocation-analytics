@@ -21,8 +21,6 @@ Bedrock API Call → Invocation Logging → S3 (JSON.gz) → Athena (SQL Query)
 
 ## Deploy
 
-> **Note:** Replace `aleck31/bedrock-logging-analytics/main` below with your actual GitHub repository path.
-
 | Region | Launch |
 |--------|--------|
 | us-west-2 (Oregon) | [![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://us-west-2.console.aws.amazon.com/cloudformation/home?region=us-west-2#/stacks/create/review?stackName=bedrock-logging-analytics&templateURL=https://raw.githubusercontent.com/aleck31/bedrock-logging-analytics/main/cf-deploy-template.yaml) |
@@ -136,6 +134,39 @@ WHERE datehour >= '2026/03/17/00' AND datehour <= '2026/03/17/23'
 -- Last 7 days
 WHERE datehour >= date_format(date_add('day', -7, now()), '%Y/%m/%d/%H')
 ```
+
+## Web UI (Optional)
+
+A Streamlit dashboard for visualizing Bedrock usage and costs.
+
+![WebUI Screenshot](docs/webui_screenshot.png)
+
+### Quick Start
+
+```bash
+cd webui
+uv sync
+uv run streamlit run app.py
+```
+
+Open http://localhost:8501 in your browser.
+
+### Features
+
+- Summary cards: total invocations, input/output tokens, estimated cost
+- Token usage & cost charts by model
+- Token usage & cost charts by caller (IAM user/role)
+- Daily and hourly trends
+- Latency analysis (min/avg/max) with high latency call detection
+
+### Configuration
+
+Use the sidebar to configure:
+- AWS Profile
+- Region
+- Athena Workgroup name
+- Athena Database name
+- Time range (1 day / 7 days / 30 days / 90 days)
 
 ## CLI Deployment
 
