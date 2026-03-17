@@ -1,6 +1,6 @@
 # [IaC] Bedrock Logging & Analytics
 
-English | [中文](README_CN.md)
+English | [中文](docs/README_CN.md)
 
 One-click solution to enable Amazon Bedrock invocation logging and analyze token usage & costs with Amazon Athena.
 
@@ -9,6 +9,8 @@ One-click solution to enable Amazon Bedrock invocation logging and analyze token
 ```
 Bedrock API Call → Invocation Logging → S3 (JSON.gz) → Athena (SQL Query)
 ```
+
+![Architecture](docs/arch_en.png)
 
 **Deployed Resources:**
 - AWS Lambda (Custom Resource) — Configures Bedrock invocation logging

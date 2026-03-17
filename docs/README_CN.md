@@ -1,6 +1,6 @@
 # [IaC] Bedrock 调用日志分析方案
 
-[English](README.md) | 中文
+[English](../README.md) | 中文
 
 一键部署 Amazon Bedrock 调用日志记录，通过 Amazon Athena 分析 Token 消耗与费用。
 
@@ -9,6 +9,8 @@
 ```
 Bedrock API 调用 → 调用日志 → S3 (JSON.gz) → Athena (SQL 查询)
 ```
+
+![架构图](arch_cn.png)
 
 **部署资源：**
 - AWS Lambda (自定义资源) — 配置 Bedrock 调用日志
