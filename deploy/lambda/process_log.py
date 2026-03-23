@@ -18,10 +18,10 @@ from boto3.dynamodb.conditions import Key
 s3 = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 
-AGG_TABLE = os.environ["AGGREGATION_TABLE"]
-PRICING_TABLE = os.environ["PRICING_TABLE"]
+USAGE_STATS_TABLE = os.environ["USAGE_STATS_TABLE"]
+PRICING_TABLE = os.environ["MODEL_PRICING_TABLE"]
 
-agg_table = dynamodb.Table(AGG_TABLE)
+usage_stats_table = dynamodb.Table(USAGE_STATS_TABLE)
 pricing_table = dynamodb.Table(PRICING_TABLE)
 
 # Cache pricing lookups within a single Lambda invocation
@@ -66,10 +66,23 @@ def handler(event, context):
 def process_file(bucket, key, path_account_id, path_region):
     """Download, parse, and aggregate a single log file."""
     resp = s3.get_object(Bucket=bucket, Key=key)
-    raw = gzip.decompress(resp["Body"].read())
-    record = json.loads(raw)
+    raw = gzip.decompress(resp["Body"].read()).decode("utf-8")
 
-    # Extract fields
+    # Log files can contain multiple JSON records (NDJSON format)
+    for line in raw.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as e:
+            print(f"Skipping malformed JSON line in {key}: {e}")
+            continue
+        process_record(record, path_account_id, path_region)
+
+
+def process_record(record, path_account_id, path_region):
+    """Process a single invocation log record."""
     model_id = record.get("modelId", "unknown")
     timestamp_str = record.get("timestamp", "")
     account_id = record.get("accountId", path_account_id)
@@ -141,7 +154,7 @@ def update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_
     }
     expr_names = {"#ttl": "ttl"}
 
-    agg_table.update_item(
+    usage_stats_table.update_item(
         Key={"PK": pk, "SK": sk},
         UpdateExpression=update_expr,
         ExpressionAttributeValues=expr_values,
@@ -151,7 +164,7 @@ def update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_
     # Conditional max_latency_ms update (separate call to avoid complexity)
     if latency_ms > 0:
         try:
-            agg_table.update_item(
+            usage_stats_table.update_item(
                 Key={"PK": pk, "SK": sk},
                 UpdateExpression="SET max_latency_ms = :val",
                 ConditionExpression="attribute_not_exists(max_latency_ms) OR max_latency_ms < :val",
@@ -191,7 +204,7 @@ def get_pricing(model_id, timestamp_str):
 def register_account(pk):
     """Auto-register account#region to META if not exists."""
     now = datetime.now(timezone.utc).isoformat()
-    agg_table.update_item(
+    usage_stats_table.update_item(
         Key={"PK": "META", "SK": f"ACCOUNT#{pk}"},
         UpdateExpression="SET registered_at = if_not_exists(registered_at, :now), last_seen = :now",
         ExpressionAttributeValues={":now": now},

@@ -1,1 +1,11 @@
-.dev
+# Python
+__pycache__/
+*.pyc
+.venv/
+uv.lock
+
+# CDK
+deploy/cdk.out/
+
+# Dev notes
+.dev/
