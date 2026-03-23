@@ -14,6 +14,10 @@ Metadata:
           - LogPrefix
           - LogRetentionDays
       - Label:
+          default: Analytics Pipeline
+        Parameters:
+          - EnableETLPipeline
+      - Label:
           default: Athena Configuration
         Parameters:
           - AthenaDbName
@@ -26,6 +30,8 @@ Metadata:
         default: S3 key prefix for Bedrock logs
       LogRetentionDays:
         default: Log retention period (days)
+      EnableETLPipeline:
+        default: Enable real-time ETL pipeline?
       AthenaDbName:
         default: Athena database name
 
@@ -60,9 +66,16 @@ Parameters:
     AllowedPattern: '^[a-z_][a-z0-9_]*$'
     Description: Athena database name (lowercase, underscores only).
 
+  EnableETLPipeline:
+    Type: String
+    Default: 'Yes'
+    AllowedValues: ['Yes', 'No']
+    Description: Enable real-time ETL pipeline (Lambda + DynamoDB + EventBridge).
+
 Conditions:
   CreateNewBucket: !Equals [!Ref UseExistingBucket, 'No']
   UseExisting: !Not [!Condition CreateNewBucket]
+  EnableETL: !Equals [!Ref EnableETLPipeline, 'Yes']
 
 Resources:
   # ============================================================
@@ -185,6 +198,135 @@ Resources:
       KeyPrefix: !Ref LogPrefix
 
   # ============================================================
+  # V2: DynamoDB Tables
+  # ============================================================
+  AggregationTable:
+    Type: AWS::DynamoDB::Table
+    Condition: EnableETL
+    Properties:
+      TableName: !Sub ${AWS::StackName}-aggregation
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+
+  PricingTable:
+    Type: AWS::DynamoDB::Table
+    Condition: EnableETL
+    Properties:
+      TableName: !Sub ${AWS::StackName}-pricing
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+
+  # ============================================================
+  # V2: Lambda ETL
+  # ============================================================
+  ETLRole:
+    Type: AWS::IAM::Role
+    Condition: EnableETL
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ETLAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub
+                  - arn:aws:s3:::${Bucket}/${Prefix}*
+                  - Bucket: !If [CreateNewBucket, !Ref LogsBucket, !Ref ExistingBucketName]
+                    Prefix: !Ref LogPrefix
+              - Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt AggregationTable.Arn
+                  - !GetAtt PricingTable.Arn
+
+  ETLFunction:
+    Type: AWS::Lambda::Function
+    Condition: EnableETL
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-etl
+      Runtime: python3.12
+      Handler: etl.handler
+      Timeout: 60
+      MemorySize: 256
+      Role: !GetAtt ETLRole.Arn
+      Environment:
+        Variables:
+          AGGREGATION_TABLE: !Ref AggregationTable
+          PRICING_TABLE: !Ref PricingTable
+      Code:
+        ZipFile: |
+          # Placeholder — replaced by lambda/etl.py during packaging
+          def handler(event, context):
+              pass
+
+  # ============================================================
+  # V2: EventBridge Rule (S3 → Lambda ETL)
+  # ============================================================
+  ETLEventRule:
+    Type: AWS::Events::Rule
+    Condition: EnableETL
+    Properties:
+      Name: !Sub ${AWS::StackName}-etl-trigger
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !If [CreateNewBucket, !Ref LogsBucket, !Ref ExistingBucketName]
+          object:
+            key:
+              - suffix: .json.gz
+      Targets:
+        - Arn: !GetAtt ETLFunction.Arn
+          Id: ETLTarget
+
+  ETLEventPermission:
+    Type: AWS::Lambda::Permission
+    Condition: EnableETL
+    Properties:
+      FunctionName: !Ref ETLFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ETLEventRule.Arn
+
+  # ============================================================
   # Athena Resources
   # ============================================================
   AthenaWorkgroup:
@@ -229,17 +371,12 @@ Resources:
             modelId string,
             input struct<
               inputContentType:string,
-              inputTokenCount:int,
-              inputBodyJson:struct<
-                messages:array<struct<role:string, content:array<struct<text:string>>>>,
-                inferenceConfig:struct<maxTokens:int>
-              >
+              inputTokenCount:int
             >,
             output struct<
               outputContentType:string,
               outputTokenCount:int,
               outputBodyJson:struct<
-                output:struct<message:struct<role:string, content:array<struct<text:string>>>>,
                 stopReason:string,
                 usage:struct<inputTokens:int, outputTokens:int, totalTokens:int>,
                 metrics:struct<latencyMs:int>
@@ -425,10 +562,17 @@ Outputs:
     Description: Athena database name
     Value: !Ref AthenaDbName
 
-  DeploymentGuide:
-    Description: Post-deployment steps
-    Value: >
-      1. Go to Athena console, select the workgroup created by this stack.
-      2. Run the 'create-database' saved query first.
-      3. Run the 'create-table' saved query to create the partitioned table.
-      4. Use the other saved queries to analyze Bedrock usage and costs.
+  AggregationTableName:
+    Condition: EnableETL
+    Description: DynamoDB aggregation table for dashboard
+    Value: !Ref AggregationTable
+
+  PricingTableName:
+    Condition: EnableETL
+    Description: DynamoDB pricing table for model costs
+    Value: !Ref PricingTable
+
+  ETLFunctionName:
+    Condition: EnableETL
+    Description: Lambda ETL function name
+    Value: !Ref ETLFunction

@@ -1,0 +1,285 @@
+{
+  "_metadata": {
+    "region": "us-west-2",
+    "source": "AWS Pricing API",
+    "note": "Prices in USD per 1K tokens. Add missing models manually."
+  },
+  "models": {
+    "Claude2.0": {
+      "input_per_1k": 0.008,
+      "output_per_1k": 0
+    },
+    "Claude2.1": {
+      "input_per_1k": 0.008,
+      "output_per_1k": 0
+    },
+    "Claude3Haiku": {
+      "input_per_1k": 0.00025,
+      "output_per_1k": 0
+    },
+    "Claude3Sonnet": {
+      "input_per_1k": 0.003,
+      "output_per_1k": 0
+    },
+    "ClaudeInstant": {
+      "input_per_1k": 0.0008,
+      "output_per_1k": 0
+    },
+    "DeepSeek-R1": {
+      "input_per_1k": 0.00135,
+      "output_per_1k": 0.0054
+    },
+    "DeepSeek-V3.1": {
+      "input_per_1k": 0.00058,
+      "output_per_1k": 0.00168
+    },
+    "GPT-OSS-Safeguard-120B": {
+      "input_per_1k": 0.00015,
+      "output_per_1k": 0.0006
+    },
+    "GPT-OSS-Safeguard-20B": {
+      "input_per_1k": 7e-05,
+      "output_per_1k": 0.0002
+    },
+    "Gemma-3-12B-IT": {
+      "input_per_1k": 9e-05,
+      "output_per_1k": 0.00029
+    },
+    "Gemma-3-27B-IT": {
+      "input_per_1k": 0.00023,
+      "output_per_1k": 0.00038
+    },
+    "Gemma-3-4B-IT": {
+      "input_per_1k": 4e-05,
+      "output_per_1k": 8e-05
+    },
+    "Kimi-K2-Thinking": {
+      "input_per_1k": 0.0006,
+      "output_per_1k": 0.0025
+    },
+    "Llama3-1-405B": {
+      "input_per_1k": 0.0024,
+      "output_per_1k": 0.0024
+    },
+    "Llama3-1-70B": {
+      "input_per_1k": 0.00072,
+      "output_per_1k": 0.00072
+    },
+    "Llama3-1-8B": {
+      "input_per_1k": 0.00022,
+      "output_per_1k": 0.00022
+    },
+    "Llama3-2-11B": {
+      "input_per_1k": 0.00016,
+      "output_per_1k": 0.00016
+    },
+    "Llama3-2-1B": {
+      "input_per_1k": 0.0001,
+      "output_per_1k": 0.0001
+    },
+    "Llama3-2-3B": {
+      "input_per_1k": 0.00015,
+      "output_per_1k": 0.00015
+    },
+    "Llama3-2-90B": {
+      "input_per_1k": 0.00072,
+      "output_per_1k": 0.00072
+    },
+    "Llama3-3-70B": {
+      "input_per_1k": 0.00072,
+      "output_per_1k": 0.00072
+    },
+    "Llama3-70B": {
+      "input_per_1k": 0.00265,
+      "output_per_1k": 0.0035
+    },
+    "Llama3-8B": {
+      "input_per_1k": 0.0003,
+      "output_per_1k": 0.0006
+    },
+    "Llama4-Maverick-17B": {
+      "input_per_1k": 0.00024,
+      "output_per_1k": 0.00097
+    },
+    "Llama4-Scout-17B": {
+      "input_per_1k": 0.00017,
+      "output_per_1k": 0.00066
+    },
+    "Magistral-Small-2509": {
+      "input_per_1k": 0.0005,
+      "output_per_1k": 0.0015
+    },
+    "Minimax-M2": {
+      "input_per_1k": 0.0003,
+      "output_per_1k": 0.0012
+    },
+    "Ministral-3-14b-Instruct": {
+      "input_per_1k": 0.0002,
+      "output_per_1k": 0.0002
+    },
+    "Ministral-3-3b-Instruct": {
+      "input_per_1k": 0.0001,
+      "output_per_1k": 0.0001
+    },
+    "Ministral-3-8b-Instruct": {
+      "input_per_1k": 0.00015,
+      "output_per_1k": 0.00015
+    },
+    "Mistral-Large-3-675b-Instruct": {
+      "input_per_1k": 0.0005,
+      "output_per_1k": 0.0015
+    },
+    "Mistral7B": {
+      "input_per_1k": 0.00015,
+      "output_per_1k": 0.0002
+    },
+    "MistralLarge": {
+      "input_per_1k": 0.004,
+      "output_per_1k": 0.012
+    },
+    "MistralLarge2407": {
+      "input_per_1k": 0.002,
+      "output_per_1k": 0.006
+    },
+    "Mixtral8x7B": {
+      "input_per_1k": 0.00045,
+      "output_per_1k": 0.0007
+    },
+    "Nemotron-Nano-12B-V2-VL-BF16": {
+      "input_per_1k": 0.0002,
+      "output_per_1k": 0.0006
+    },
+    "Nemotron-Nano-3-30B": {
+      "input_per_1k": 6e-05,
+      "output_per_1k": 0.00024
+    },
+    "Nemotron-Nano-9B-V2": {
+      "input_per_1k": 6e-05,
+      "output_per_1k": 0.00023
+    },
+    "Nova2.0Lite": {
+      "input_per_1k": 0.00033,
+      "output_per_1k": 0.00275
+    },
+    "Nova2.0Omni-text": {
+      "input_per_1k": 0.0003,
+      "output_per_1k": 0.0028
+    },
+    "Nova2.0Pro-text": {
+      "input_per_1k": 0.001375,
+      "output_per_1k": 0.011
+    },
+    "NovaLite": {
+      "input_per_1k": 6e-05,
+      "output_per_1k": 0.00024
+    },
+    "NovaMicro": {
+      "input_per_1k": 3.5e-05,
+      "output_per_1k": 0.00014
+    },
+    "NovaPremier": {
+      "input_per_1k": 0.0025,
+      "output_per_1k": 0.0125
+    },
+    "NovaPro": {
+      "input_per_1k": 0.0008,
+      "output_per_1k": 0.0032
+    },
+    "NovaSonic2.0-speech": {
+      "input_per_1k": 0.003,
+      "output_per_1k": 0.012
+    },
+    "NovaSonic2.0-text": {
+      "input_per_1k": 0.000319,
+      "output_per_1k": 0.002651
+    },
+    "PixtralLarge2502": {
+      "input_per_1k": 0.002,
+      "output_per_1k": 0.006
+    },
+    "Qwen3-235B-A22B": {
+      "input_per_1k": 0.00022,
+      "output_per_1k": 0.00088
+    },
+    "Qwen3-32B": {
+      "input_per_1k": 0.00015,
+      "output_per_1k": 0.0006
+    },
+    "Qwen3-VL-235B-A22B": {
+      "input_per_1k": 0.00053,
+      "output_per_1k": 0.00266
+    },
+    "Qwen3Coder-30B-A3B": {
+      "input_per_1k": 0.00015,
+      "output_per_1k": 0.0006
+    },
+    "Qwen3Coder-480B-A35B": {
+      "input_per_1k": 0.00045,
+      "output_per_1k": 0.0018
+    },
+    "TitanEmbeddingV2-Text": {
+      "input_per_1k": 2e-05,
+      "output_per_1k": 0
+    },
+    "TitanEmbeddingsG1-Image": {
+      "input_per_1k": 0.0008,
+      "output_per_1k": 0
+    },
+    "TitanEmbeddingsG1-Text": {
+      "input_per_1k": 0.0001,
+      "output_per_1k": 0
+    },
+    "TitanTextG1-Express": {
+      "input_per_1k": 0.0002,
+      "output_per_1k": 0.0006
+    },
+    "TitanTextG1-Lite": {
+      "input_per_1k": 0.00015,
+      "output_per_1k": 0.0002
+    },
+    "Voxtral-Mini-24B-2507": {
+      "input_per_1k": 0.0001,
+      "output_per_1k": 0.0003
+    },
+    "Voxtral-Mini-3B-2507": {
+      "input_per_1k": 4e-05,
+      "output_per_1k": 4e-05
+    },
+    "deepseek.v3.2": {
+      "input_per_1k": 0.00062,
+      "output_per_1k": 0.00185
+    },
+    "gpt-oss-120b": {
+      "input_per_1k": 0.00015,
+      "output_per_1k": 0.0006
+    },
+    "gpt-oss-20b": {
+      "input_per_1k": 7e-05,
+      "output_per_1k": 0.0003
+    },
+    "minimax.minimax-m2.1": {
+      "input_per_1k": 0.0003,
+      "output_per_1k": 0.0012
+    },
+    "mistral.devstral-2-123b": {
+      "input_per_1k": 0.0004,
+      "output_per_1k": 0.002
+    },
+    "moonshotai.kimi-k2.5": {
+      "input_per_1k": 0.0006,
+      "output_per_1k": 0.003
+    },
+    "qwen.qwen3-coder-next": {
+      "input_per_1k": 0.0005,
+      "output_per_1k": 0.0012
+    },
+    "zai.glm-4.7": {
+      "input_per_1k": 0.0006,
+      "output_per_1k": 0.0022
+    },
+    "zai.glm-4.7-flash": {
+      "input_per_1k": 7e-05,
+      "output_per_1k": 0.0004
+    }
+  }
+}

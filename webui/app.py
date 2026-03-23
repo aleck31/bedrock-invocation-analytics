@@ -52,22 +52,23 @@ with st.sidebar:
     workgroup = st.text_input("Athena Workgroup", value="bedrock-logging-analytics-workgroup")
     database = st.text_input("Athena Database", value="bedrock_analytics")
     time_range = st.selectbox("Time Range", ["1 day", "7 days", "30 days", "90 days"], index=1)
+    st.caption(f"💲 {len(PRICE_MAP)} models priced")
+    st.caption("Run `uv run python fetch_pricing.py` to update")
     profiles = boto3.Session().available_profiles
     profile = st.selectbox("AWS Profile", profiles, index=profiles.index("default") if "default" in profiles else 0)
 
 days = int(time_range.split()[0])
 date_filter = f"datehour >= date_format(date_add('day', -{days}, now()), '%Y/%m/%d/%H')"
 
-# Price map: (input_price, output_price) per 1K tokens
-PRICE_MAP = {
-    "claude-3-haiku": (0.00025, 0.00125),
-    "claude-3-5-haiku": (0.001, 0.005),
-    "claude-3-5-sonnet": (0.003, 0.015),
-    "claude-3-opus": (0.015, 0.075),
-    "llama3-8b": (0.0003, 0.0006),
-    "llama3-70b": (0.00265, 0.0035),
-    "mistral-7b": (0.00015, 0.0002),
-}
+# Load pricing data from pricing.json
+import os, json as _json
+_pricing_path = os.path.join(os.path.dirname(__file__), "pricing.json")
+PRICE_MAP = {}
+if os.path.exists(_pricing_path):
+    with open(_pricing_path) as f:
+        _data = _json.load(f)
+    for model_key, prices in _data.get("models", {}).items():
+        PRICE_MAP[model_key.lower()] = (prices["input_per_1k"], prices["output_per_1k"])
 
 
 def run_query(sql: str) -> pd.DataFrame:
@@ -85,7 +86,7 @@ def run_query(sql: str) -> pd.DataFrame:
         if state == "SUCCEEDED":
             break
         if state in ("FAILED", "CANCELLED"):
-            st.error(f"Query failed: {status['QueryExecution']['Status'].get('StateChangeReason', '')}")
+            st.error("Query failed. Check Athena workgroup and table configuration.")
             return pd.DataFrame()
         time.sleep(0.5)
 
@@ -163,10 +164,11 @@ try:
     # --- Helper: compute cost ---
     def add_cost(df):
         def calc(row):
+            model_id = str(row.get("modelId", "")).lower()
             for key, (ip, op) in PRICE_MAP.items():
-                if key in str(row.get("modelId", "")):
+                if key in model_id:
                     return round(row.get("input_tokens", 0) * ip / 1000 + row.get("output_tokens", 0) * op / 1000, 6)
-            return round(row.get("input_tokens", 0) * 0.001 / 1000 + row.get("output_tokens", 0) * 0.005 / 1000, 6)
+            return 0
         df["cost_usd"] = df.apply(calc, axis=1)
         return df
 
@@ -306,5 +308,4 @@ try:
             st.success("No high latency calls")
 
 except Exception as e:
-    st.error(f"Error: {e}")
-    st.info("Please check your AWS configuration in the sidebar.")
+    st.error("An error occurred. Please check your AWS configuration in the sidebar.")
