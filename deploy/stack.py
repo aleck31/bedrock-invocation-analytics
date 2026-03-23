@@ -218,6 +218,27 @@ def handler(event, context):
             targets=[targets.LambdaFunction(aggregate_stats_fn, event=events.RuleTargetInput.from_object({"type": "monthly"}))],
         )
 
+        # ── Lambda: Sync pricing from LiteLLM (weekly) ──
+        sync_pricing_fn = _lambda.Function(self, "SyncPricingFunction",
+            function_name=f"{id}-sync-pricing",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="sync_pricing.handler",
+            code=_lambda.Code.from_asset("lambda"),
+            timeout=Duration.seconds(120), memory_size=256,
+            environment={
+                "MODEL_PRICING_TABLE": model_pricing_table.table_name,
+                "USAGE_STATS_TABLE": usage_stats_table.table_name,
+            },
+        )
+        model_pricing_table.grant_read_write_data(sync_pricing_fn)
+        usage_stats_table.grant_write_data(sync_pricing_fn)
+
+        events.Rule(self, "WeeklyPricingSyncSchedule",
+            rule_name=f"{id}-weekly-pricing-sync",
+            schedule=events.Schedule.cron(minute="0", hour="2", week_day="MON"),
+            targets=[targets.LambdaFunction(sync_pricing_fn)],
+        )
+
         # ── Outputs ──
         CfnOutput(self, "BucketName", value=bucket_name_resolved)
         CfnOutput(self, "UsageStatsTableName", value=usage_stats_table.table_name)

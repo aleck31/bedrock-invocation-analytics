@@ -1,12 +1,9 @@
 """Bedrock Invocation Analytics WebUI — Dashboard."""
 
-import tomllib
-from pathlib import Path
 from nicegui import ui
 from webui import data
 
-with open(Path(__file__).parent.parent / "pyproject.toml", "rb") as f:
-    VERSION = tomllib.load(f)["project"]["version"]
+VERSION = ""  # Set by index.py
 
 
 def format_number(n: int) -> str:
@@ -75,7 +72,7 @@ def dashboard_page():
 
     def refresh():
         state["account"] = f"{account_select.value}#{region_select.value}"
-        state["days"] = days_select.value
+        state["days"] = days_select.value or 7
         content.clear()
         with content:
             render_dashboard(state["account"], state["days"])
@@ -211,15 +208,3 @@ def summary_card(title: str, value: str, icon: str, color: str):
 
 
 # ── Pricing Settings page (placeholder) ──
-@ui.page("/pricing")
-def pricing_page():
-    ui.dark_mode(False)
-    with ui.header().classes("bg-white text-gray-800 shadow-sm items-center px-6"):
-        ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props("flat round")
-        ui.label("Pricing Settings").classes("text-xl font-bold ml-2")
-
-    with ui.column().classes("max-w-5xl mx-auto p-6"):
-        ui.label("Model pricing management — coming soon").classes("text-gray-400")
-
-
-ui.run(title="Dashboard", favicon="docs/favicon.svg", port=8080, reload=False)

@@ -16,4 +16,4 @@ done
 export AWS_DEFAULT_REGION="$REGION"
 [[ -n "$PROFILE" ]] && export AWS_PROFILE="$PROFILE"
 
-cd "$(dirname "$0")" && uv run python -m webui.app
+cd "$(dirname "$0")" && uv run python -m webui.index

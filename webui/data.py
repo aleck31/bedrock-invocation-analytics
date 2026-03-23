@@ -8,10 +8,12 @@ import boto3
 from boto3.dynamodb.conditions import Key
 
 USAGE_TABLE = os.environ.get("USAGE_STATS_TABLE", "BedrockLoggingAnalytics-usage-stats")
+PRICING_TABLE = os.environ.get("MODEL_PRICING_TABLE", "BedrockLoggingAnalytics-model-pricing")
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
 
 _ddb = boto3.resource("dynamodb", region_name=AWS_REGION)
 _usage = _ddb.Table(USAGE_TABLE)
+_pricing = _ddb.Table(PRICING_TABLE)
 
 
 def _resolve_granularity(account_region: str, days: int):
@@ -145,6 +147,46 @@ def _extract_dimension(sk: str) -> str:
     """Extract dimension from SK like HOURLY#2026-03-23T05#MODEL#xxx → MODEL#xxx"""
     parts = sk.split("#", 2)
     return parts[2] if len(parts) >= 3 else ""
+
+
+def get_all_pricing() -> list[dict]:
+    """Get current effective price for all models."""
+    # Scan all MODEL# items, then pick latest SK per model
+    resp = _pricing.scan()
+    items = resp.get("Items", [])
+    while resp.get("LastEvaluatedKey"):
+        resp = _pricing.scan(ExclusiveStartKey=resp["LastEvaluatedKey"])
+        items.extend(resp.get("Items", []))
+
+    # Group by PK, pick latest SK (= current effective price)
+    models: dict[str, dict] = {}
+    for item in items:
+        pk = item["PK"]
+        if not pk.startswith("MODEL#"):
+            continue
+        if pk not in models or item["SK"] > models[pk]["SK"]:
+            models[pk] = item
+
+    result = []
+    for pk, item in sorted(models.items()):
+        model_id = pk.replace("MODEL#", "")
+        result.append({
+            "model_id": model_id,
+            "input_per_1k": float(item.get("input_per_1k", 0)),
+            "output_per_1k": float(item.get("output_per_1k", 0)),
+            "effective_date": item["SK"],
+            "source": item.get("source", ""),
+        })
+    return result
+
+
+def get_pricing_sync_info() -> dict | None:
+    """Get last pricing sync metadata."""
+    try:
+        resp = _usage.get_item(Key={"PK": "META", "SK": "PRICING_SYNC#latest"})
+        return resp.get("Item")
+    except Exception:
+        return None
 
 
 def _format_item(item: dict, granularity: str) -> dict:
