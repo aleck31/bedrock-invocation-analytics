@@ -2,8 +2,10 @@
 __pycache__/
 *.pyc
 .venv/
+
+# Local config
+.env.deploy
 .dev/
-uv.lock
 
 # CDK
 cdk.out/

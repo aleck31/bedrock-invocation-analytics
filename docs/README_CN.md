@@ -51,13 +51,14 @@ uv sync
 # 初始化 CDK（仅首次需要）
 ./deploy.sh bootstrap --region us-west-2 --profile YOUR_PROFILE
 
-# 创建新 S3 存储桶部署
-./deploy.sh deploy --profile YOUR_PROFILE \
-  --parameters ExistingBucketName="" LogPrefix="bedrock/invocation-logs/"
-
 # 使用已有 S3 存储桶部署
-./deploy.sh deploy --profile YOUR_PROFILE \
-  --parameters ExistingBucketName=你的桶名 LogPrefix="bedrock/invocation-logs/"
+./deploy.sh deploy --profile YOUR_PROFILE --bucket 你的桶名
+
+# 创建新 S3 存储桶部署
+./deploy.sh deploy --profile YOUR_PROFILE
+
+# 后续部署自动复用已保存的配置（.env.deploy）
+./deploy.sh deploy
 ```
 
 > 使用已有存储桶时，需启用 S3 EventBridge 通知：
@@ -88,7 +89,7 @@ AWS_DEFAULT_REGION=us-west-2 python3 scripts/seed_pricing.py \
 ## 启动 WebUI
 
 ```bash
-./start-webui.sh --region us-west-2 --profile YOUR_PROFILE
+./start-webui.sh
 ```
 
 浏览器打开 http://localhost:8080
@@ -111,7 +112,7 @@ AWS_DEFAULT_REGION=us-west-2 python3 scripts/seed_pricing.py \
 │   └── data.py               # DynamoDB 数据访问层
 ├── scripts/
 │   └── seed_pricing.py       # 从 LiteLLM 导入定价
-├── deploy.sh                 # CDK 便捷脚本
+├── deploy.sh                 # CDK 部署脚本
 ├── start-webui.sh            # WebUI 启动脚本
 └── pyproject.toml            # 依赖管理（uv）
 ```

@@ -1,8 +1,8 @@
 [project]
 name = "bedrock-invocation-analytics"
-version = "2.3.2"
+version = "2.3.3"
 description = "Bedrock invocation logging analytics - monitor token usage, costs and performance"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "aws-cdk-lib>=2.100.0",
     "constructs>=10.0.0",

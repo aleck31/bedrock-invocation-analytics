@@ -51,13 +51,8 @@ uv sync
 # Bootstrap CDK (first time only)
 ./deploy.sh bootstrap --region us-west-2 --profile YOUR_PROFILE
 
-# Deploy with new S3 bucket
-./deploy.sh deploy --profile YOUR_PROFILE \
-  --parameters ExistingBucketName="" LogPrefix="bedrock/invocation-logs/"
-
 # Deploy with existing S3 bucket
-./deploy.sh deploy --profile YOUR_PROFILE \
-  --parameters ExistingBucketName=your-bucket-name LogPrefix="bedrock/invocation-logs/"
+./deploy.sh deploy
 ```
 
 > For existing buckets, enable S3 EventBridge notifications:
@@ -89,6 +84,9 @@ AWS_DEFAULT_REGION=us-west-2 python3 scripts/seed_pricing.py \
 
 ```bash
 ./start-webui.sh --region us-west-2 --profile YOUR_PROFILE
+
+# Or if .env.deploy exists (created by deploy.sh), just:
+./start-webui.sh
 ```
 
 Open http://localhost:8080 in your browser.
@@ -111,7 +109,7 @@ Open http://localhost:8080 in your browser.
 │   └── data.py               # DynamoDB data access
 ├── scripts/
 │   └── seed_pricing.py       # Seed pricing from LiteLLM
-├── deploy.sh                 # CDK convenience script
+├── deploy.sh                 # CDK deploy script
 ├── start-webui.sh            # WebUI launch script
 └── pyproject.toml            # Dependencies (managed by uv)
 ```

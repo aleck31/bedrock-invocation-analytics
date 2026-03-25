@@ -1,9 +1,10 @@
 #!/bin/bash
 # Start Bedrock Analytics WebUI
 # Usage: ./start-webui.sh [--profile PROFILE] [--region REGION]
+# Reads defaults from .env.deploy if available.
 
-PROFILE=""
-REGION="us-west-2"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[[ -f "$SCRIPT_DIR/.env.deploy" ]] && source "$SCRIPT_DIR/.env.deploy"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -13,7 +14,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-export AWS_DEFAULT_REGION="$REGION"
+export AWS_DEFAULT_REGION="${REGION:-us-west-2}"
 [[ -n "$PROFILE" ]] && export AWS_PROFILE="$PROFILE"
 
-cd "$(dirname "$0")" && uv run python -m webui.main
+cd "$SCRIPT_DIR" && uv run python -m webui.main

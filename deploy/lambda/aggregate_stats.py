@@ -20,12 +20,19 @@ def handler(event, context):
     now = datetime.now(timezone.utc)
 
     if rollup_type == "daily":
-        rollup_daily(now - timedelta(days=1))
+        # Support custom date via event for backfill: {"type":"daily","date":"2026-03-20"}
+        date_str = event.get("date")
+        target = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc) if date_str else now - timedelta(days=1)
+        rollup_daily(target)
     elif rollup_type == "monthly":
-        # Roll up previous month
-        first_of_month = now.replace(day=1)
-        last_month = first_of_month - timedelta(days=1)
-        rollup_monthly(last_month.year, last_month.month)
+        month_str = event.get("month")  # e.g. "2026-03"
+        if month_str:
+            y, m = month_str.split("-")
+            rollup_monthly(int(y), int(m))
+        else:
+            first_of_month = now.replace(day=1)
+            last_month = first_of_month - timedelta(days=1)
+            rollup_monthly(last_month.year, last_month.month)
 
 
 def rollup_daily(target_date):
@@ -82,6 +89,11 @@ def _aggregate_and_write(items, pk, sk_prefix, ttl_days):
             agg[dimension].get("max_latency_ms", 0),
             int(item.get("max_latency_ms", 0)),
         )
+        # min_latency_ms: take the min (ignore 0)
+        item_min = int(item.get("min_latency_ms", 0))
+        if item_min > 0:
+            cur_min = agg[dimension].get("min_latency_ms", 0)
+            agg[dimension]["min_latency_ms"] = item_min if cur_min == 0 else min(cur_min, item_min)
 
     ttl_val = int(time.time()) + ttl_days * 86400 if ttl_days else None
 
