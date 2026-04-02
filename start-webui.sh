@@ -4,7 +4,7 @@
 # Reads defaults from .env.deploy if available.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-[[ -f "$SCRIPT_DIR/.env.deploy" ]] && source "$SCRIPT_DIR/.env.deploy"
+[[ -f "$SCRIPT_DIR/.env.deploy" ]] && set -a && source "$SCRIPT_DIR/.env.deploy" && set +a
 
 # Defaults from .env.deploy (new format uses PRIMARY_*)
 PROFILE="${PRIMARY_PROFILE:-$PROFILE}"

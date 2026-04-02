@@ -274,6 +274,8 @@ class HubStack(Stack):
 
             CfnOutput(self, "SpokeWriteRoleArn", value=spoke_write_role.role_arn)
 
+        # ── WebUI deployment (TODO: evaluate lightweight hosting options) ──
+
         # ── Outputs ──
         CfnOutput(self, "BucketName", value=bucket_name_resolved)
         CfnOutput(self, "UsageStatsTableName", value=usage_stats_table.table_name)

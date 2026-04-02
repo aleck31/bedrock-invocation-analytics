@@ -6,6 +6,11 @@
 
 log_prefix: bedrock/invocation-logs/
 
+# WebUI settings
+webui:
+  admin_user: your-username
+  admin_pass: your-password
+
 accounts:
   - profile: default           # AWS CLI profile name
     region: us-west-2

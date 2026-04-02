@@ -1,6 +1,6 @@
 """Bedrock Invocation Analytics WebUI — Dashboard."""
 
-from nicegui import ui
+from nicegui import app, ui
 from webui import data
 
 VERSION = ""  # Set by main.py
@@ -29,8 +29,25 @@ def dashboard_page():
         ui.button(icon="menu", on_click=lambda: drawer.toggle()).props("flat round")
         ui.label("Bedrock Invocation Analytics").classes("text-xl font-bold ml-2")
         ui.space()
-        ui.button(icon="refresh", on_click=lambda: ui.navigate.to("/")).props("flat round").tooltip("Refresh")
+        auto_refresh = ui.select(
+            {0: "Off", 10: "10s", 30: "30s", 60: "1min", 300: "5min"},
+            value=0, label="Auto",
+        ).props("dense outlined").classes("w-24").tooltip("Auto refresh interval")
+        ui.button(icon="refresh", on_click=lambda: refresh()).props("flat round").tooltip("Refresh")
         ui.button(icon="settings", on_click=lambda: ui.navigate.to("/pricing")).props("flat round").tooltip("Pricing Settings")
+        ui.button(icon="logout", on_click=lambda: (app.storage.user.clear(), ui.navigate.to("/login"))).props("flat round").tooltip("Logout")
+
+    # Auto refresh timer (defined after refresh function below)
+    timer_ref: dict = {"timer": None}
+
+    def on_interval_change(e):
+        val = e.value or 0
+        if timer_ref["timer"]:
+            timer_ref["timer"].deactivate()
+        if val > 0:
+            timer_ref["timer"] = ui.timer(val, lambda: refresh())
+
+    auto_refresh.on_value_change(on_interval_change)
 
     # ── Left drawer (sidebar) ──
     with ui.left_drawer(value=True).classes("bg-gray-50 p-4") as drawer:

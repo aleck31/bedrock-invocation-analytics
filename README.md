@@ -10,7 +10,9 @@ Real-time analytics for Amazon Bedrock — monitor token usage, costs, and perfo
 - Pie charts: input tokens, output tokens, cost breakdown
 - Performance: latency by model (min/avg/max) + latency trend with model selector
 - Usage trend over time with model selector
-- Pricing settings: view/edit model pricing, sync status
+- Auto refresh (5s / 15s / 30s / 1min / 5min)
+- Pricing settings: view/edit model pricing with history, sync status
+- Login authentication (configurable via config.yaml)
 - Multi-account, multi-region support (sidebar selector)
 - Responsive layout (desktop & mobile)
 
@@ -161,13 +163,10 @@ AWS_DEFAULT_REGION=us-west-2 python3 scripts/seed_pricing.py \
 ## Start WebUI
 
 ```bash
-./start-webui.sh --region us-west-2 --profile YOUR_PROFILE
-
-# Or if .env.deploy exists (created by deploy.sh), just:
 ./start-webui.sh
 ```
 
-Open http://localhost:8080 in your browser.
+Open http://localhost:8060 in your browser.
 
 ## Cleanup
 
