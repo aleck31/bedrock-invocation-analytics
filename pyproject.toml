@@ -1,6 +1,6 @@
 [project]
 name = "bedrock-invocation-analytics"
-version = "2.3.5"
+version = "3.0.0"
 description = "Bedrock invocation logging analytics - monitor token usage, costs and performance"
 requires-python = ">=3.13"
 dependencies = [
@@ -8,4 +8,5 @@ dependencies = [
     "constructs>=10.0.0",
     "nicegui",
     "boto3",
+    "pyyaml>=6.0.3",
 ]

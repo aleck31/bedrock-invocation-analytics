@@ -1,4 +1,4 @@
-"""CDK Stack for Bedrock Invocation Logging Analytics."""
+"""CDK Hub Stack for Bedrock Invocation Analytics."""
 
 from aws_cdk import (
     Stack,
@@ -18,8 +18,39 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+BEDROCK_LOGGING_CR_CODE = """
+import boto3, json, urllib3
+http = urllib3.PoolManager()
+def send(event, ctx, status, data={}):
+    try:
+        body = json.dumps({'Status': status, 'Reason': str(data.get('Error','')),
+            'PhysicalResourceId': ctx.log_stream_name, 'StackId': event['StackId'],
+            'RequestId': event['RequestId'], 'LogicalResourceId': event['LogicalResourceId'], 'Data': data})
+        resp = http.request('PUT', event['ResponseURL'], headers={'content-type':'','content-length':str(len(body))}, body=body)
+        print(f'cfn response status: {resp.status}')
+    except Exception as e:
+        print(f'Failed to send cfn response: {e}')
+def handler(event, context):
+    try:
+        client = boto3.client('bedrock')
+        rt = event['RequestType']
+        props = event['ResourceProperties']
+        if rt in ('Create', 'Update'):
+            client.put_model_invocation_logging_configuration(loggingConfig={
+                's3Config': {'bucketName': props['BucketName'], 'keyPrefix': props['KeyPrefix']},
+                'textDataDeliveryEnabled': True, 'imageDataDeliveryEnabled': True, 'embeddingDataDeliveryEnabled': True,
+            })
+        elif rt == 'Delete':
+            try: client.delete_model_invocation_logging_configuration()
+            except: pass
+        send(event, context, 'SUCCESS')
+    except Exception as e:
+        print(e)
+        send(event, context, 'FAILED', {'Error': str(e)})
+"""
 
-class BedrockInvocationAnalyticsStack(Stack):
+
+class HubStack(Stack):
     def __init__(self, scope: Construct, id: str, **kwargs):
         super().__init__(scope, id, **kwargs)
 
@@ -124,36 +155,7 @@ class BedrockInvocationAnalyticsStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_13,
             handler="index.handler", timeout=Duration.seconds(30),
             role=logging_role,
-            code=_lambda.Code.from_inline("""
-import boto3, json, urllib3
-http = urllib3.PoolManager()
-def send(event, ctx, status, data={}):
-    try:
-        body = json.dumps({'Status': status, 'Reason': str(data.get('Error','')),
-            'PhysicalResourceId': ctx.log_stream_name, 'StackId': event['StackId'],
-            'RequestId': event['RequestId'], 'LogicalResourceId': event['LogicalResourceId'], 'Data': data})
-        resp = http.request('PUT', event['ResponseURL'], headers={'content-type':'','content-length':str(len(body))}, body=body)
-        print(f'cfn response status: {resp.status}')
-    except Exception as e:
-        print(f'Failed to send cfn response: {e}')
-def handler(event, context):
-    try:
-        client = boto3.client('bedrock')
-        rt = event['RequestType']
-        props = event['ResourceProperties']
-        if rt in ('Create', 'Update'):
-            client.put_model_invocation_logging_configuration(loggingConfig={
-                's3Config': {'bucketName': props['BucketName'], 'keyPrefix': props['KeyPrefix']},
-                'textDataDeliveryEnabled': True, 'imageDataDeliveryEnabled': True, 'embeddingDataDeliveryEnabled': True,
-            })
-        elif rt == 'Delete':
-            try: client.delete_model_invocation_logging_configuration()
-            except: pass
-        send(event, context, 'SUCCESS')
-    except Exception as e:
-        print(e)
-        send(event, context, 'FAILED', {'Error': str(e)})
-"""),
+            code=_lambda.Code.from_inline(BEDROCK_LOGGING_CR_CODE),
         )
         CustomResource(self, "BedrockLogging",
             service_token=logging_fn.function_arn,
@@ -249,6 +251,28 @@ def handler(event, context):
             schedule=events.Schedule.cron(minute="0", hour="21", week_day="SUN"),
             targets=[targets.LambdaFunction(sync_pricing_fn)],
         )
+
+        # ── Class name update ──
+        self.usage_stats_table = usage_stats_table
+        self.model_pricing_table = model_pricing_table
+
+        # ── IAM Role for Spoke Lambdas (cross-account) ──
+        spoke_accounts_str = self.node.try_get_context("spoke_accounts") or ""
+        spoke_accounts = [a for a in spoke_accounts_str.split(",") if a]
+        if spoke_accounts:
+            spoke_write_role = iam.Role(self, "SpokeWriteRole",
+                role_name="BedrockAnalytics-SpokeWriteRole",
+                assumed_by=iam.CompositePrincipal(*[
+                    iam.ArnPrincipal(f"arn:aws:iam::{acct}:root")
+                    for acct in spoke_accounts
+                ]),
+            )
+            # Usage stats: read + write
+            usage_stats_table.grant_read_write_data(spoke_write_role)
+            # Pricing: read only
+            model_pricing_table.grant_read_data(spoke_write_role)
+
+            CfnOutput(self, "SpokeWriteRoleArn", value=spoke_write_role.role_arn)
 
         # ── Outputs ──
         CfnOutput(self, "BucketName", value=bucket_name_resolved)

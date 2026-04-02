@@ -247,7 +247,7 @@ def render_dashboard(account_region: str, days: int):
                 usage_chart.options["xAxis"]["data"] = [x["period"] for x in t]
                 usage_chart.options["series"] = [
                     {"name": "Invocations", "type": "bar", "data": [x["invocations"] for x in t]},
-                    {"name": "Cost ($)", "type": "line", "itemStyle": {"color": "#F97316"}, "yAxisIndex": 1, "data": [round(x["cost_usd"], 6) for x in t]},
+                    {"name": "Cost ($)", "type": "line", "itemStyle": {"color": "#F97316"}, "yAxisIndex": 1, "smooth": True, "data": [round(x["cost_usd"], 6) for x in t]},
                 ]
                 usage_chart.update()
 
@@ -300,9 +300,9 @@ def render_dashboard(account_region: str, days: int):
                         t = data.get_trend(account_region, days, dim)
                         lat_chart.options["xAxis"] = {"type": "category", "data": [x["period"] for x in t]}
                         lat_chart.options["series"] = [
-                            {"name": "Min", "type": "line", "data": [x["min_latency_ms"] for x in t], "itemStyle": {"color": "#10B981"}, "smooth": True},
+                            {"name": "Min", "type": "line", "data": [x["min_latency_ms"] for x in t], "itemStyle": {"color": "#10B981"}},
                             {"name": "Avg", "type": "line", "data": [x["avg_latency_ms"] for x in t], "itemStyle": {"color": "#E879F9"}, "lineStyle": {"type": "dashed"}},
-                            {"name": "Max", "type": "line", "data": [x["max_latency_ms"] for x in t], "itemStyle": {"color": "#8B5CF6"}, "smooth": True},
+                            {"name": "Max", "type": "line", "data": [x["max_latency_ms"] for x in t], "itemStyle": {"color": "#8B5CF6"}},
                         ]
                         lat_chart.update()
 
@@ -315,6 +315,3 @@ def summary_card(title: str, value: str, icon: str, color: str):
             ui.icon(icon).classes(f"text-xl text-{color}-500")
             ui.label(title).classes("text-sm text-gray-500")
         ui.label(value).classes("text-3xl font-bold mt-2")
-
-
-# ── Pricing Settings page (placeholder) ──

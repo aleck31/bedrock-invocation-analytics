@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 
 # Local config
+config.yaml
 .env.deploy
 .dev/
 

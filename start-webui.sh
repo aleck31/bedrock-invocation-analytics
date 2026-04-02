@@ -6,6 +6,10 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 [[ -f "$SCRIPT_DIR/.env.deploy" ]] && source "$SCRIPT_DIR/.env.deploy"
 
+# Defaults from .env.deploy (new format uses PRIMARY_*)
+PROFILE="${PRIMARY_PROFILE:-$PROFILE}"
+REGION="${PRIMARY_REGION:-$REGION}"
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --profile) PROFILE="$2"; shift 2 ;;

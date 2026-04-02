@@ -1,0 +1,22 @@
+# Bedrock Invocation Analytics — Deployment Configuration
+# Copy this file to config.yaml and edit with your account details.
+#
+# The account marked 'primary: true' deploys the full stack (DynamoDB, Pricing, Aggregate, WebUI).
+# Other accounts deploy a lightweight spoke stack (S3, Bedrock logging, ETL Lambda → writes to primary DynamoDB).
+
+log_prefix: bedrock/invocation-logs/
+
+accounts:
+  - profile: default           # AWS CLI profile name
+    region: us-west-2
+    bucket: ""                 # existing S3 bucket name, or empty to create new
+    primary: true              # primary account (only one)
+
+  - profile: application
+    region: us-east-1
+    bucket: ""                 # existing S3 bucket name, or empty to create new
+
+  # Add more accounts as needed:
+  # - profile: another-profile
+  #   region: us-west-2
+  #   bucket: ""

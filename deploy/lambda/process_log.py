@@ -16,7 +16,20 @@ import boto3
 from boto3.dynamodb.conditions import Key
 
 s3 = boto3.client("s3")
-dynamodb = boto3.resource("dynamodb")
+
+# Spoke mode: assume cross-account role to access hub DynamoDB
+HUB_ROLE_ARN = os.environ.get("HUB_ROLE_ARN")
+if HUB_ROLE_ARN:
+    _sts = boto3.client("sts")
+    _creds = _sts.assume_role(RoleArn=HUB_ROLE_ARN, RoleSessionName="spoke-etl")["Credentials"]
+    _hub_session = boto3.Session(
+        aws_access_key_id=_creds["AccessKeyId"],
+        aws_secret_access_key=_creds["SecretAccessKey"],
+        aws_session_token=_creds["SessionToken"],
+    )
+    dynamodb = _hub_session.resource("dynamodb")
+else:
+    dynamodb = boto3.resource("dynamodb")
 
 USAGE_STATS_TABLE = os.environ["USAGE_STATS_TABLE"]
 PRICING_TABLE = os.environ["MODEL_PRICING_TABLE"]
