@@ -129,8 +129,15 @@ def process_record(record, path_account_id, path_region):
 
     # Latency from output body
     output_body = out.get("outputBodyJson", {}) or {}
+    if not isinstance(output_body, dict):
+        output_body = {}  # streaming responses have list, skip metrics/usage from body
     metrics = output_body.get("metrics", {}) or {}
     latency_ms = metrics.get("latencyMs", 0) or 0
+
+    # Cache tokens from usage block or input top-level (InvokeModelWithResponseStream)
+    usage = output_body.get("usage", {}) if isinstance(output_body, dict) else {}
+    cache_read_tokens = inp.get("cacheReadInputTokenCount", 0) or usage.get("cacheReadInputTokens", 0) or 0
+    cache_write_tokens = inp.get("cacheWriteInputTokenCount", 0) or usage.get("cacheWriteInputTokens", 0) or 0
 
     # Caller from identity ARN — extract username/role
     identity = record.get("identity", {}) or {}
@@ -147,9 +154,16 @@ def process_record(record, path_account_id, path_region):
     pricing = get_pricing(model_id, timestamp_str)
     input_price_micro = pricing.get("input_price_micro", 0)
     output_price_micro = pricing.get("output_price_micro", 0)
+    cache_read_price_micro = pricing.get("cache_read_price_micro", 0)
+    cache_write_price_micro = pricing.get("cache_write_price_micro", 0)
 
-    # cost in micro-USD
-    cost_micro = (input_tokens * input_price_micro + output_tokens * output_price_micro) // 1000
+    # cost in micro-USD (include cache tokens)
+    cost_micro = (
+        input_tokens * input_price_micro
+        + output_tokens * output_price_micro
+        + cache_read_tokens * cache_read_price_micro
+        + cache_write_tokens * cache_write_price_micro
+    ) // 1000
 
     pk = f"{account_id}#{region}"
 
@@ -162,16 +176,17 @@ def process_record(record, path_account_id, path_region):
 
     for dim in dimensions:
         sk = f"HOURLY#{hour_key}#{dim}"
-        update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_ms, output_tokens and latency_ms, ttl_val)
+        update_aggregation(pk, sk, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micro, latency_ms, output_tokens and latency_ms, ttl_val)
 
     # Auto-register account#region
     register_account(pk)
 
 
-def update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_ms, has_tpot, ttl_val):
+def update_aggregation(pk, sk, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micro, latency_ms, has_tpot, ttl_val):
     """Atomic update of aggregation record."""
     update_expr = (
         "ADD invocations :one, input_tokens :inp, output_tokens :out, "
+        "cache_read_tokens :cr, cache_write_tokens :cw, "
         "cost_micro_usd :cost, latency_sum_ms :lat "
         "SET #ttl = if_not_exists(#ttl, :ttl)"
     )
@@ -179,6 +194,8 @@ def update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_
         ":one": 1,
         ":inp": input_tokens,
         ":out": output_tokens,
+        ":cr": cache_read_tokens,
+        ":cw": cache_write_tokens,
         ":cost": cost_micro,
         ":lat": latency_ms,
         ":ttl": ttl_val,
@@ -230,7 +247,7 @@ def get_pricing(model_id, timestamp_str):
     if cache_key in _pricing_cache:
         return _pricing_cache[cache_key]
 
-    result = {"input_price_micro": 0, "output_price_micro": 0}
+    result = {"input_price_micro": 0, "output_price_micro": 0, "cache_read_price_micro": 0, "cache_write_price_micro": 0}
 
     try:
         resp = pricing_table.query(
@@ -244,6 +261,8 @@ def get_pricing(model_id, timestamp_str):
             # Convert per-1k-token price to micro-USD per 1k tokens
             result["input_price_micro"] = int(float(item.get("input_per_1k", 0)) * 1_000_000)
             result["output_price_micro"] = int(float(item.get("output_per_1k", 0)) * 1_000_000)
+            result["cache_read_price_micro"] = int(float(item.get("cache_read_per_1k", 0)) * 1_000_000)
+            result["cache_write_price_micro"] = int(float(item.get("cache_write_per_1k", 0)) * 1_000_000)
     except Exception as e:
         print(f"Pricing lookup failed for {model_id}: {e}")
 

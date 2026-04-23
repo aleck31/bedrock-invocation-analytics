@@ -85,7 +85,7 @@ def _aggregate_and_write(items, pk, sk_prefix, ttl_days):
         if dimension.startswith("MODEL#arn:"):
             dimension = "MODEL#" + dimension.rsplit("/", 1)[-1]
 
-        for field in ("invocations", "input_tokens", "output_tokens", "cost_micro_usd", "latency_sum_ms", "tpot_sum", "tpot_count"):
+        for field in ("invocations", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "cost_micro_usd", "latency_sum_ms", "tpot_sum", "tpot_count"):
             agg[dimension][field] += int(item.get(field, 0))
         # max_latency_ms / tpot_max: take the max
         for f in ("max_latency_ms", "tpot_max"):
