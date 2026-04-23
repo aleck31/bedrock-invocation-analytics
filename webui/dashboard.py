@@ -14,6 +14,16 @@ def format_number(n: int) -> str:
     return str(n)
 
 
+def format_ms(ms: int | float) -> str:
+    if ms >= 1000:
+        return f"{ms / 1000:.2f}s"
+    return f"{ms:.2f}ms"
+
+
+def format_cost(usd: float) -> str:
+    return f"${usd:.2f}"
+
+
 @ui.page("/")
 def dashboard_page():
     ui.dark_mode(False)
@@ -90,7 +100,7 @@ def dashboard_page():
         ui.label(f"v{VERSION}").classes("text-xs text-gray-400")
 
     # ── Main content ──
-    content = ui.column().classes("w-full max-w-7xl mx-auto p-6 gap-6")
+    content = ui.column().classes("w-full max-w-[1600px] mx-auto p-4 gap-6")
 
     def refresh():
         state["account"] = f"{account_select.value}#{region_select.value}"
@@ -113,13 +123,15 @@ def render_dashboard(account_region: str, days: int):
     summary = data.get_summary(account_region, days)
 
     # ── Token Usage & Cost by Model (Chart) ──
-    with ui.row().classes("w-full gap-4 flex-wrap"):
+    with ui.row().classes("w-full gap-3 flex-wrap"):
         summary_card("Total Invocations", format_number(summary["invocations"]), "call_made", "blue")
         summary_card("Input Tokens", format_number(summary["input_tokens"]), "input", "green")
         summary_card("Output Tokens", format_number(summary["output_tokens"]), "output", "orange")
-        summary_card("Estimated Cost", f"${summary['cost_usd']:.4f}", "attach_money", "red")
-        summary_card("Avg Latency", f"{summary['avg_latency_ms']}ms", "speed", "purple")
-        summary_card("Avg TPOT", f"{summary['avg_tpot']}ms", "timer", "indigo")
+        cache_total = summary["cache_read_tokens"] + summary["cache_write_tokens"]
+        summary_card("Cache Tokens", format_number(cache_total), "cached", "teal") if cache_total else None
+        summary_card("Estimated Cost", format_cost(summary['cost_usd']), "attach_money", "red")
+        summary_card("Avg Latency", format_ms(summary['avg_latency_ms']), "speed", "purple")
+        summary_card("Avg TPOT", format_ms(summary['avg_tpot']), "timer", "indigo")
 
     models = data.get_by_model(account_region, days)
     if models:
@@ -371,8 +383,8 @@ def render_dashboard(account_region: str, days: int):
                         update_ttft_chart(first_model)
 
 def summary_card(title: str, value: str, icon: str, color: str):
-    with ui.card().classes("min-w-[150px] flex-1 p-6"):
+    with ui.card().classes("min-w-[138px] flex-1 p-4 h-[120px]"):
         with ui.row().classes("items-center gap-2"):
             ui.icon(icon).classes(f"text-xl text-{color}-500")
             ui.label(title).classes("text-sm text-gray-500")
-        ui.label(value).classes("text-3xl font-bold mt-2")
+        ui.label(value).classes("text-2xl font-bold mt-2")
