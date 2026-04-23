@@ -85,19 +85,15 @@ def get_summary(account_region: str, days: int = 7) -> dict:
     g, start, end = _resolve_granularity(account_region, days)
     items = query_usage(account_region, g, start, end, "TOTAL")
 
-    total = {"invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "latency_sum_ms": 0, "_tpot_sum": 0, "_tpot_count": 0}
+    total = {"invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "latency_sum_ms": 0, "tpot_sum": 0, "tpot_count": 0}
     for item in items:
-        for k in ("invocations", "input_tokens", "output_tokens"):
+        for k in ("invocations", "input_tokens", "output_tokens", "tpot_sum", "tpot_count"):
             total[k] += item.get(k, 0)
         total["cost_usd"] += item.get("cost_usd", 0.0)
         total["latency_sum_ms"] += item.get("latency_sum_ms", 0)
-        if item.get("tpot_avg"):
-            total["_tpot_sum"] += item["tpot_avg"] * item.get("invocations", 0)
-            total["_tpot_count"] += item.get("invocations", 0)
 
     total["avg_latency_ms"] = round(total["latency_sum_ms"] / total["invocations"]) if total["invocations"] else 0
-    total["avg_tpot"] = round(total["_tpot_sum"] / total["_tpot_count"], 2) if total["_tpot_count"] else 0
-    del total["_tpot_sum"], total["_tpot_count"]
+    total["avg_tpot"] = round(total["tpot_sum"] / total["tpot_count"] / 1000, 2) if total["tpot_count"] else 0
     return total
 
 
@@ -112,24 +108,21 @@ def get_by_model(account_region: str, days: int = 7) -> list[dict]:
     for item in items:
         model = item["dimension"].replace("MODEL#", "")
         if model not in models:
-            models[model] = {"model": model, "invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "latency_sum_ms": 0, "max_latency_ms": 0, "min_latency_ms": 0, "tpot_max": 0, "tpot_min": 0, "_tpot_sum": 0, "_tpot_count": 0}
-        for k in ("invocations", "input_tokens", "output_tokens", "latency_sum_ms"):
+            models[model] = {"model": model, "invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "latency_sum_ms": 0, "max_latency_ms": 0, "min_latency_ms": 0, "tpot_max": 0, "tpot_min": 0, "tpot_sum": 0, "tpot_count": 0}
+        for k in ("invocations", "input_tokens", "output_tokens", "latency_sum_ms", "tpot_sum", "tpot_count"):
             models[model][k] += item.get(k, 0)
         models[model]["cost_usd"] += item.get("cost_usd", 0.0)
         models[model]["max_latency_ms"] = max(models[model]["max_latency_ms"], item.get("max_latency_ms", 0))
         models[model]["tpot_max"] = max(models[model]["tpot_max"], item.get("tpot_max", 0))
-        for f, mf in [("min_latency_ms", "min_latency_ms"), ("tpot_min", "tpot_min")]:
+        for f in ("min_latency_ms", "tpot_min"):
             v = item.get(f, 0)
             if v > 0:
-                cur = models[model][mf]
-                models[model][mf] = v if cur == 0 else min(cur, v)
-        models[model]["_tpot_sum"] += item.get("tpot_avg", 0) * item.get("invocations", 0) if item.get("tpot_avg") else 0
-        models[model]["_tpot_count"] += item.get("invocations", 0) if item.get("tpot_avg") else 0
+                cur = models[model][f]
+                models[model][f] = v if cur == 0 else min(cur, v)
 
     for m in models.values():
         m["avg_latency_ms"] = round(m["latency_sum_ms"] / m["invocations"]) if m["invocations"] else 0
-        m["tpot_avg"] = round(m["_tpot_sum"] / m["_tpot_count"], 2) if m["_tpot_count"] else 0
-        del m["_tpot_sum"], m["_tpot_count"]
+        m["tpot_avg"] = round(m["tpot_sum"] / m["tpot_count"] / 1000, 2) if m["tpot_count"] else 0
 
     return sorted(models.values(), key=lambda x: x["cost_usd"], reverse=True)
 
@@ -275,6 +268,9 @@ def _format_item(item: dict, granularity: str) -> dict:
     invocations = int(item.get("invocations", 0))
     latency_sum = int(item.get("latency_sum_ms", 0))
 
+    tpot_count = int(item.get("tpot_count", 0))
+    tpot_sum = int(item.get("tpot_sum", 0))
+
     return {
         "period": period,
         "dimension": dimension,
@@ -287,7 +283,9 @@ def _format_item(item: dict, granularity: str) -> dict:
         "avg_latency_ms": round(latency_sum / invocations) if invocations else 0,
         "max_latency_ms": int(item.get("max_latency_ms", 0)),
         "min_latency_ms": int(item.get("min_latency_ms", 0)),
-        "tpot_avg": round(int(item.get("tpot_sum", 0)) / int(item.get("tpot_count", 0)) / 1000, 2) if int(item.get("tpot_count", 0)) else 0,
+        "tpot_sum": tpot_sum,
+        "tpot_count": tpot_count,
+        "tpot_avg": round(tpot_sum / tpot_count / 1000, 2) if tpot_count else 0,
         "tpot_min": round(int(item.get("tpot_min", 0)) / 1000, 2),
         "tpot_max": round(int(item.get("tpot_max", 0)) / 1000, 2),
     }

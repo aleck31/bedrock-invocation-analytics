@@ -119,6 +119,7 @@ def render_dashboard(account_region: str, days: int):
         summary_card("Output Tokens", format_number(summary["output_tokens"]), "output", "orange")
         summary_card("Estimated Cost", f"${summary['cost_usd']:.4f}", "attach_money", "red")
         summary_card("Avg Latency", f"{summary['avg_latency_ms']}ms", "speed", "purple")
+        summary_card("Avg TPOT", f"{summary['avg_tpot']}ms", "timer", "indigo")
 
     models = data.get_by_model(account_region, days)
     if models:

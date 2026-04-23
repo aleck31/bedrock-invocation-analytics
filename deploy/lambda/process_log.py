@@ -149,10 +149,7 @@ def process_record(record, path_account_id, path_region):
     output_price_micro = pricing.get("output_price_micro", 0)
 
     # cost in micro-USD
-    cost_micro = (
-        input_tokens * input_price_micro // 1000
-        + output_tokens * output_price_micro // 1000
-    )
+    cost_micro = (input_tokens * input_price_micro + output_tokens * output_price_micro) // 1000
 
     pk = f"{account_id}#{region}"
 

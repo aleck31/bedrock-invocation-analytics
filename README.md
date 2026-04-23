@@ -5,10 +5,11 @@ English | [中文](docs/README_CN.md)
 Real-time analytics for Amazon Bedrock — monitor token usage, costs, and performance across AWS accounts.
 
 ## Features
-- Summary cards: invocations, input/output tokens, estimated cost, avg latency
+- Summary cards: invocations, input/output tokens, estimated cost, avg latency, avg TPOT
 - Token usage & cost by model and by caller (chart / pie / table views)
 - Pie charts: input tokens, output tokens, cost breakdown
 - Performance: latency by model (min/avg/max) + latency trend with model selector
+- TPOT by model (min/avg/max) + TTFT trend from CloudWatch (avg/p99)
 - Usage trend over time with model selector
 - Auto refresh (5s / 15s / 30s / 1min / 5min)
 - Pricing settings: view/edit model pricing with history, sync status
@@ -118,9 +119,11 @@ uv sync
 ./deploy.sh spoke              # all spokes
 ./deploy.sh spoke lab          # specific spoke
 
-# Deploy everything
+# Deploy everything (recommended for updates)
 ./deploy.sh all
 ```
+
+> **Note:** After code updates, use `./deploy.sh all` to ensure both hub and spoke Lambdas are updated.
 
 > For existing buckets, enable S3 EventBridge notifications:
 > ```bash

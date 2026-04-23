@@ -5,10 +5,11 @@
 Amazon Bedrock 实时分析 — 监控多账户的 Token 用量、成本和性能。
 
 ## 功能
-- 概览卡片：调用次数、输入/输出 Token、预估成本、平均延迟
+- 概览卡片：调用次数、输入/输出 Token、预估成本、平均延迟、平均 TPOT
 - 按模型和调用者的 Token 用量与成本（图表 / 饼图 / 表格视图）
 - 饼图：输入 Token、输出 Token、成本占比
 - 性能分析：按模型延迟（min/avg/max）+ 延迟趋势（支持按模型筛选）
+- TPOT 分析：按模型 TPOT（min/avg/max）+ CloudWatch TTFT 趋势（avg/p99）
 - 使用趋势（支持按模型筛选）
 - 自动刷新（5s / 15s / 30s / 1min / 5min）
 - 定价设置：查看/编辑模型定价及历史，同步状态
@@ -118,9 +119,11 @@ uv sync
 ./deploy.sh spoke              # 所有 spoke
 ./deploy.sh spoke lab          # 指定 spoke
 
-# 全部部署
+# 全部部署（更新代码后推荐使用）
 ./deploy.sh all
 ```
+
+> **注意：** 代码更新后，建议使用 `./deploy.sh all` 确保 hub 和 spoke 的 Lambda 同步更新。
 
 > 使用已有存储桶时，需启用 S3 EventBridge 通知：
 > ```bash

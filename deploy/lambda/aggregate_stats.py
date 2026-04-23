@@ -41,14 +41,7 @@ def rollup_daily(target_date):
     accounts = get_accounts()
 
     for pk in accounts:
-        # Query all HOURLY records for this date
-        resp = table.query(
-            KeyConditionExpression=(
-                Key("PK").eq(pk)
-                & Key("SK").between(f"HOURLY#{date_str}T00", f"HOURLY#{date_str}T23\xff")
-            ),
-        )
-        items = resp.get("Items", [])
+        items = _paginated_query(pk, f"HOURLY#{date_str}T00", f"HOURLY#{date_str}T23\xff")
         _aggregate_and_write(items, pk, f"DAILY#{date_str}", ttl_days=365)
 
 
@@ -58,14 +51,21 @@ def rollup_monthly(year, month):
     accounts = get_accounts()
 
     for pk in accounts:
-        resp = table.query(
-            KeyConditionExpression=(
-                Key("PK").eq(pk)
-                & Key("SK").between(f"DAILY#{month_str}-01", f"DAILY#{month_str}-31\xff")
-            ),
-        )
-        items = resp.get("Items", [])
+        items = _paginated_query(pk, f"DAILY#{month_str}-01", f"DAILY#{month_str}-31\xff")
         _aggregate_and_write(items, pk, f"MONTHLY#{month_str}", ttl_days=None)
+
+
+def _paginated_query(pk, sk_start, sk_end):
+    """Query with pagination to handle >1MB results."""
+    items = []
+    kwargs = {"KeyConditionExpression": Key("PK").eq(pk) & Key("SK").between(sk_start, sk_end)}
+    while True:
+        resp = table.query(**kwargs)
+        items.extend(resp.get("Items", []))
+        if "LastEvaluatedKey" not in resp:
+            break
+        kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+    return items
 
 
 def _aggregate_and_write(items, pk, sk_prefix, ttl_days):
