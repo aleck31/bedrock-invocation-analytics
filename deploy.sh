@@ -18,20 +18,23 @@ if [[ ! -f "$CONFIG" ]]; then
     exit 1
 fi
 
-# Parse YAML config (lightweight, no external deps)
-parse_yaml() {
-    python3 -c "
-import yaml, json, sys
+# Parse YAML config — one-shot into shell variables
+eval "$(python3 -c "
+import yaml
 with open('$CONFIG') as f:
-    print(json.dumps(yaml.safe_load(f)))
-"
-}
-
-CONFIG_JSON=$(parse_yaml)
-PRIMARY_PROFILE=$(echo "$CONFIG_JSON" | python3 -c "import json,sys; accounts=json.load(sys.stdin)['accounts']; print(next(a['profile'] for a in accounts if a.get('primary')))")
-PRIMARY_REGION=$(echo "$CONFIG_JSON" | python3 -c "import json,sys; accounts=json.load(sys.stdin)['accounts']; print(next(a['region'] for a in accounts if a.get('primary')))")
-PRIMARY_BUCKET=$(echo "$CONFIG_JSON" | python3 -c "import json,sys; accounts=json.load(sys.stdin)['accounts']; print(next(a.get('bucket','') for a in accounts if a.get('primary')))")
-LOG_PREFIX=$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('log_prefix','bedrock/invocation-logs/'))")
+    c = yaml.safe_load(f)
+primary = next(a for a in c['accounts'] if a.get('primary'))
+spokes = [a for a in c['accounts'] if not a.get('primary')]
+print(f'PRIMARY_PROFILE=\"{primary[\"profile\"]}\"')
+print(f'PRIMARY_REGION=\"{primary[\"region\"]}\"')
+print(f'PRIMARY_BUCKET=\"{primary.get(\"bucket\",\"\")}\"')
+print(f'LOG_PREFIX=\"{c.get(\"log_prefix\",\"bedrock/invocation-logs/\")}\"')
+print(f'WEBUI_USER=\"{c.get(\"webui\",{}).get(\"admin_user\",\"\")}\"')
+print(f'WEBUI_PASS=\"{c.get(\"webui\",{}).get(\"admin_pass\",\"\")}\"')
+# Spokes as profile:region:bucket lines
+spoke_lines = '|'.join(f'{a[\"profile\"]}:{a[\"region\"]}:{a.get(\"bucket\",\"\")}' for a in spokes)
+print(f'SPOKE_LIST=\"{spoke_lines}\"')
+")"
 
 # Get account ID for a profile
 get_account_id() {
@@ -62,15 +65,10 @@ case "$CMD" in
 
         # Collect spoke account IDs for SpokeWriteRole trust policy
         SPOKE_IDS=""
-        SPOKE_ACCOUNTS=$(echo "$CONFIG_JSON" | python3 -c "
-import json,sys
-accounts=json.load(sys.stdin)['accounts']
-for a in accounts:
-    if not a.get('primary'):
-        print(a['profile'])
-")
-        for sp in $SPOKE_ACCOUNTS; do
-            ACCT_ID=$(get_account_id "$sp")
+        IFS='|' read -ra SPOKE_ENTRIES <<< "$SPOKE_LIST"
+        for spoke_info in "${SPOKE_ENTRIES[@]}"; do
+            IFS=: read -r profile region bucket <<< "$spoke_info"
+            ACCT_ID=$(get_account_id "$profile")
             if [[ -n "$ACCT_ID" ]]; then
                 SPOKE_IDS="${SPOKE_IDS:+$SPOKE_IDS,}$ACCT_ID"
             fi
@@ -85,10 +83,6 @@ for a in accounts:
         run_cdk "$PRIMARY_PROFILE" "$PRIMARY_REGION" deploy \
             -c target=hub $SPOKE_CTX \
             $PARAMS --require-approval never "$@"
-
-        # Read webui config
-        WEBUI_USER=$(echo "$CONFIG_JSON" | python3 -c "import json,sys; c=json.load(sys.stdin); print(c.get('webui',{}).get('admin_user','admin'))")
-        WEBUI_PASS=$(echo "$CONFIG_JSON" | python3 -c "import json,sys; c=json.load(sys.stdin); print(c.get('webui',{}).get('admin_pass','changeme'))")
 
         # Save outputs to .env.deploy
         cat > "$ENV_FILE" <<EOF
@@ -110,14 +104,10 @@ EOF
         TARGET_PROFILE="${1:-}"
         HUB_ACCOUNT=$(get_account_id "$PRIMARY_PROFILE")
 
-        SPOKES=$(echo "$CONFIG_JSON" | python3 -c "
-import json,sys
-accounts=json.load(sys.stdin)['accounts']
-for a in accounts:
-    if not a.get('primary'):
-        print(f\"{a['profile']}:{a['region']}:{a.get('bucket','')}\")" )
+        SPOKES=()
+        IFS='|' read -ra SPOKES <<< "$SPOKE_LIST"
 
-        for spoke_info in $SPOKES; do
+        for spoke_info in "${SPOKES[@]}"; do
             IFS=: read -r profile region bucket <<< "$spoke_info"
             [[ -n "$TARGET_PROFILE" && "$profile" != "$TARGET_PROFILE" ]] && continue
 

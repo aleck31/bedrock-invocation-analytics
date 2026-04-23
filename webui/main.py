@@ -18,15 +18,24 @@ with open(Path(__file__).parent.parent / "pyproject.toml", "rb") as f:
 dashboard.VERSION = VERSION
 
 # ── Authentication ──
-# Set credentials via environment variables: ADMIN_USER / ADMIN_PASS
-# Default: admin / admin (change in production!)
-USERS = {os.environ.get("ADMIN_USER", "admin"): os.environ.get("ADMIN_PASS", "admin")}
+# Credentials from .env.deploy (set by deploy.sh from config.yaml)
+# If not configured, auth is disabled with a warning.
+_admin_user = os.environ.get("ADMIN_USER", "")
+_admin_pass = os.environ.get("ADMIN_PASS", "")
+AUTH_ENABLED = bool(_admin_user and _admin_pass)
+USERS = {_admin_user: _admin_pass} if AUTH_ENABLED else {}
+
+if not AUTH_ENABLED:
+    print("[WARN] ADMIN_USER/ADMIN_PASS not set — authentication disabled. Set credentials in config.yaml and run deploy.sh.")
+
 UNRESTRICTED = {"/login"}
 
 
 @app.add_middleware
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        if not AUTH_ENABLED:
+            return await call_next(request)
         if not app.storage.user.get("authenticated", False):
             if not request.url.path.startswith("/_nicegui") and request.url.path not in UNRESTRICTED:
                 return RedirectResponse(f"/login?redirect_to={request.url.path}")
