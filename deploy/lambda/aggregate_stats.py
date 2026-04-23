@@ -81,19 +81,21 @@ def _aggregate_and_write(items, pk, sk_prefix, ttl_days):
         if len(parts) < 3:
             continue
         dimension = parts[2]  # e.g. MODEL#claude-3-5-haiku, CALLER#wsadmin, TOTAL
+        # Normalize ARN-format model IDs
+        if dimension.startswith("MODEL#arn:"):
+            dimension = "MODEL#" + dimension.rsplit("/", 1)[-1]
 
-        for field in ("invocations", "input_tokens", "output_tokens", "cost_micro_usd", "latency_sum_ms"):
+        for field in ("invocations", "input_tokens", "output_tokens", "cost_micro_usd", "latency_sum_ms", "tpot_sum", "tpot_count"):
             agg[dimension][field] += int(item.get(field, 0))
-        # max_latency_ms: take the max
-        agg[dimension]["max_latency_ms"] = max(
-            agg[dimension].get("max_latency_ms", 0),
-            int(item.get("max_latency_ms", 0)),
-        )
-        # min_latency_ms: take the min (ignore 0)
-        item_min = int(item.get("min_latency_ms", 0))
-        if item_min > 0:
-            cur_min = agg[dimension].get("min_latency_ms", 0)
-            agg[dimension]["min_latency_ms"] = item_min if cur_min == 0 else min(cur_min, item_min)
+        # max_latency_ms / tpot_max: take the max
+        for f in ("max_latency_ms", "tpot_max"):
+            agg[dimension][f] = max(agg[dimension].get(f, 0), int(item.get(f, 0)))
+        # min_latency_ms / tpot_min: take the min (ignore 0)
+        for f in ("min_latency_ms", "tpot_min"):
+            item_val = int(item.get(f, 0))
+            if item_val > 0:
+                cur = agg[dimension].get(f, 0)
+                agg[dimension][f] = item_val if cur == 0 else min(cur, item_val)
 
     ttl_val = int(time.time()) + ttl_days * 86400 if ttl_days else None
 

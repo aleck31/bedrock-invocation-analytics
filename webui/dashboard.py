@@ -273,14 +273,11 @@ def render_dashboard(account_region: str, days: int):
 
     # ── Performance ──
     if models:
+        # Row 1: Latency by Model + TPOT by Model
+        model_names = [m["model"].replace("global.", "").replace("anthropic.", "").replace("meta.", "")[:25] for m in models[:15]]
         with ui.row().classes("w-full gap-4"):
-            # Left: Latency by Model
             with ui.card().classes("flex-1 p-2"):
                 ui.label("Latency by Model").classes("text-lg font-semibold px-2 pt-2")
-                model_names = [m["model"].replace("global.", "").replace("anthropic.", "").replace("meta.", "")[:25] for m in models[:15]]
-                avg_lat = [m.get("avg_latency_ms", 0) for m in models[:15]]
-                max_lat = [m.get("max_latency_ms", 0) for m in models[:15]]
-                min_lat = [m.get("min_latency_ms", 0) for m in models[:15]]
                 ui.echart({
                     "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
                     "legend": {"top": 0},
@@ -288,17 +285,32 @@ def render_dashboard(account_region: str, days: int):
                     "xAxis": {"type": "category", "data": model_names, "axisLabel": {"rotate": 40, "interval": 0}},
                     "yAxis": {"type": "value", "name": "ms"},
                     "series": [
-                        {"name": "Min", "type": "bar", "data": min_lat, "itemStyle": {"color": "#10B981"}},
-                        {"name": "Avg", "type": "bar", "data": avg_lat, "itemStyle": {"color": "#E879F9", "opacity": 0.6}},
-                        {"name": "Max", "type": "bar", "data": max_lat, "itemStyle": {"color": "#8B5CF6"}},
+                        {"name": "Min", "type": "bar", "data": [m.get("min_latency_ms", 0) for m in models[:15]], "itemStyle": {"color": "#10B981"}},
+                        {"name": "Avg", "type": "bar", "data": [m.get("avg_latency_ms", 0) for m in models[:15]], "itemStyle": {"color": "#E879F9", "opacity": 0.6}},
+                        {"name": "Max", "type": "bar", "data": [m.get("max_latency_ms", 0) for m in models[:15]], "itemStyle": {"color": "#8B5CF6"}},
                     ],
                 }).classes("w-full h-80")
 
-            # Right: Latency Trend (per model)
-            if trend:
-                with ui.card().classes("flex-1 p-2"):
-                    model_options = {"TOTAL": "All Models"} | {f"MODEL#{m['model']}": m["model"] for m in models}
+            with ui.card().classes("flex-1 p-2"):
+                ui.label("TPOT by Model (approx)").classes("text-lg font-semibold px-2 pt-2")
+                ui.echart({
+                    "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+                    "legend": {"top": 0},
+                    "grid": {"top": 40, "bottom": 70, "left": 60, "right": 20},
+                    "xAxis": {"type": "category", "data": model_names, "axisLabel": {"rotate": 40, "interval": 0}},
+                    "yAxis": {"type": "value", "name": "ms/token"},
+                    "series": [
+                        {"name": "Min", "type": "bar", "data": [m.get("tpot_min", 0) for m in models[:15]], "itemStyle": {"color": "#10B981"}},
+                        {"name": "Avg", "type": "bar", "data": [m.get("tpot_avg", 0) for m in models[:15]], "itemStyle": {"color": "#6366F1"}},
+                        {"name": "Max", "type": "bar", "data": [m.get("tpot_max", 0) for m in models[:15]], "itemStyle": {"color": "#A78BFA", "opacity": 0.6}},
+                    ],
+                }).classes("w-full h-80")
 
+        # Row 2: Latency Trend + TTFT Trend
+        if trend:
+            model_options = {"TOTAL": "All Models"} | {f"MODEL#{m['model']}": m["model"] for m in models}
+            with ui.row().classes("w-full gap-4"):
+                with ui.card().classes("flex-1 p-2"):
                     with ui.row().classes("w-full items-center px-2 pt-2"):
                         ui.label("Latency Trend").classes("text-lg font-semibold")
                         ui.space()
@@ -325,6 +337,37 @@ def render_dashboard(account_region: str, days: int):
 
                     lat_model_select.on_value_change(lambda e: update_latency_chart(e.value))
                     update_latency_chart()
+
+                with ui.card().classes("flex-1 p-2"):
+                    ttft_model_options = {m["model"]: m["model"].replace("global.", "").replace("anthropic.", "").replace("meta.", "")[:25] for m in models}
+                    first_model = models[0]["model"] if models else ""
+
+                    with ui.row().classes("w-full items-center px-2 pt-2"):
+                        ui.label("TTFT Trend (CloudWatch)").classes("text-lg font-semibold")
+                        ui.space()
+                        ttft_model_select = ui.select(ttft_model_options, value=first_model).props("dense outlined").classes("w-48")
+
+                    ttft_chart = ui.echart({
+                        "tooltip": {"trigger": "axis"},
+                        "legend": {"top": 0},
+                        "grid": {"top": 40, "bottom": 30, "left": 60, "right": 20},
+                        "xAxis": {"type": "category", "data": []},
+                        "yAxis": {"type": "value", "name": "ms"},
+                        "series": [],
+                    }).classes("w-full h-72")
+
+                    def update_ttft_chart(model_id):
+                        t = data.get_ttft_trend(model_id, days)
+                        ttft_chart.options["xAxis"]["data"] = [x["period"] for x in t]
+                        ttft_chart.options["series"] = [
+                            {"name": "Avg TTFT", "type": "line", "data": [x["ttft_avg"] for x in t], "itemStyle": {"color": "#6366F1"}, "smooth": True},
+                            {"name": "P99 TTFT", "type": "line", "data": [x["ttft_p99"] for x in t], "itemStyle": {"color": "#A78BFA"}, "lineStyle": {"type": "dashed"}},
+                        ]
+                        ttft_chart.update()
+
+                    ttft_model_select.on_value_change(lambda e: update_ttft_chart(e.value))
+                    if first_model:
+                        update_ttft_chart(first_model)
 
 def summary_card(title: str, value: str, icon: str, color: str):
     with ui.card().classes("min-w-[150px] flex-1 p-6"):

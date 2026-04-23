@@ -85,14 +85,19 @@ def get_summary(account_region: str, days: int = 7) -> dict:
     g, start, end = _resolve_granularity(account_region, days)
     items = query_usage(account_region, g, start, end, "TOTAL")
 
-    total = {"invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "latency_sum_ms": 0}
+    total = {"invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "latency_sum_ms": 0, "_tpot_sum": 0, "_tpot_count": 0}
     for item in items:
         for k in ("invocations", "input_tokens", "output_tokens"):
             total[k] += item.get(k, 0)
         total["cost_usd"] += item.get("cost_usd", 0.0)
         total["latency_sum_ms"] += item.get("latency_sum_ms", 0)
+        if item.get("tpot_avg"):
+            total["_tpot_sum"] += item["tpot_avg"] * item.get("invocations", 0)
+            total["_tpot_count"] += item.get("invocations", 0)
 
     total["avg_latency_ms"] = round(total["latency_sum_ms"] / total["invocations"]) if total["invocations"] else 0
+    total["avg_tpot"] = round(total["_tpot_sum"] / total["_tpot_count"], 2) if total["_tpot_count"] else 0
+    del total["_tpot_sum"], total["_tpot_count"]
     return total
 
 
@@ -107,18 +112,24 @@ def get_by_model(account_region: str, days: int = 7) -> list[dict]:
     for item in items:
         model = item["dimension"].replace("MODEL#", "")
         if model not in models:
-            models[model] = {"model": model, "invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "latency_sum_ms": 0, "max_latency_ms": 0, "min_latency_ms": 0}
+            models[model] = {"model": model, "invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "latency_sum_ms": 0, "max_latency_ms": 0, "min_latency_ms": 0, "tpot_max": 0, "tpot_min": 0, "_tpot_sum": 0, "_tpot_count": 0}
         for k in ("invocations", "input_tokens", "output_tokens", "latency_sum_ms"):
             models[model][k] += item.get(k, 0)
         models[model]["cost_usd"] += item.get("cost_usd", 0.0)
         models[model]["max_latency_ms"] = max(models[model]["max_latency_ms"], item.get("max_latency_ms", 0))
-        item_min = item.get("min_latency_ms", 0)
-        if item_min > 0:
-            cur_min = models[model]["min_latency_ms"]
-            models[model]["min_latency_ms"] = item_min if cur_min == 0 else min(cur_min, item_min)
+        models[model]["tpot_max"] = max(models[model]["tpot_max"], item.get("tpot_max", 0))
+        for f, mf in [("min_latency_ms", "min_latency_ms"), ("tpot_min", "tpot_min")]:
+            v = item.get(f, 0)
+            if v > 0:
+                cur = models[model][mf]
+                models[model][mf] = v if cur == 0 else min(cur, v)
+        models[model]["_tpot_sum"] += item.get("tpot_avg", 0) * item.get("invocations", 0) if item.get("tpot_avg") else 0
+        models[model]["_tpot_count"] += item.get("invocations", 0) if item.get("tpot_avg") else 0
 
     for m in models.values():
         m["avg_latency_ms"] = round(m["latency_sum_ms"] / m["invocations"]) if m["invocations"] else 0
+        m["tpot_avg"] = round(m["_tpot_sum"] / m["_tpot_count"], 2) if m["_tpot_count"] else 0
+        del m["_tpot_sum"], m["_tpot_count"]
 
     return sorted(models.values(), key=lambda x: x["cost_usd"], reverse=True)
 
@@ -195,6 +206,33 @@ def get_pricing_sync_info() -> dict | None:
         return None
 
 
+_cw = boto3.client("cloudwatch", region_name=AWS_REGION)
+
+
+def get_ttft_trend(model_id: str, days: int = 7) -> list[dict]:
+    """Get TimeToFirstToken trend from CloudWatch for a model."""
+    now = datetime.now(timezone.utc)
+    period = 3600 if days <= 7 else 86400
+    try:
+        resp = _cw.get_metric_data(
+            MetricDataQueries=[
+                {"Id": "avg", "MetricStat": {"Metric": {"Namespace": "AWS/Bedrock", "MetricName": "TimeToFirstToken", "Dimensions": [{"Name": "ModelId", "Value": model_id}]}, "Period": period, "Stat": "Average"}},
+                {"Id": "p99", "MetricStat": {"Metric": {"Namespace": "AWS/Bedrock", "MetricName": "TimeToFirstToken", "Dimensions": [{"Name": "ModelId", "Value": model_id}]}, "Period": period, "Stat": "p99"}},
+            ],
+            StartTime=now - timedelta(days=days),
+            EndTime=now,
+        )
+    except Exception as e:
+        print(f"[WARN] CloudWatch TTFT query failed: {e}")
+        return []
+
+    results = {r["Id"]: dict(zip(r["Timestamps"], r["Values"])) for r in resp.get("MetricDataResults", [])}
+    timestamps = sorted(set(results.get("avg", {}).keys()) | set(results.get("p99", {}).keys()))
+    return [{"period": t.strftime("%Y-%m-%dT%H" if period == 3600 else "%Y-%m-%d"),
+             "ttft_avg": round(results.get("avg", {}).get(t, 0)),
+             "ttft_p99": round(results.get("p99", {}).get(t, 0))} for t in timestamps]
+
+
 def save_pricing(model_id: str, input_per_1k: float, output_per_1k: float, effective_date: str):
     """Save a manual pricing record."""
     _pricing.put_item(Item={
@@ -249,4 +287,7 @@ def _format_item(item: dict, granularity: str) -> dict:
         "avg_latency_ms": round(latency_sum / invocations) if invocations else 0,
         "max_latency_ms": int(item.get("max_latency_ms", 0)),
         "min_latency_ms": int(item.get("min_latency_ms", 0)),
+        "tpot_avg": round(int(item.get("tpot_sum", 0)) / int(item.get("tpot_count", 0)) / 1000, 2) if int(item.get("tpot_count", 0)) else 0,
+        "tpot_min": round(int(item.get("tpot_min", 0)) / 1000, 2),
+        "tpot_max": round(int(item.get("tpot_max", 0)) / 1000, 2),
     }

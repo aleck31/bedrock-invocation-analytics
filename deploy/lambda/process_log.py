@@ -19,17 +19,30 @@ s3 = boto3.client("s3")
 
 # Spoke mode: assume cross-account role to access hub DynamoDB
 HUB_ROLE_ARN = os.environ.get("HUB_ROLE_ARN")
-if HUB_ROLE_ARN:
-    _sts = boto3.client("sts")
-    _creds = _sts.assume_role(RoleArn=HUB_ROLE_ARN, RoleSessionName="spoke-etl")["Credentials"]
-    _hub_session = boto3.Session(
-        aws_access_key_id=_creds["AccessKeyId"],
-        aws_secret_access_key=_creds["SecretAccessKey"],
-        aws_session_token=_creds["SessionToken"],
+_sts = boto3.client("sts") if HUB_ROLE_ARN else None
+_hub_creds = None
+_hub_creds_expiry = None
+
+
+def _get_hub_session():
+    """Get or refresh cross-account session. STS creds expire after 1h; refresh at 50min."""
+    global _hub_creds, _hub_creds_expiry
+    now = datetime.now(timezone.utc)
+    if _hub_creds is None or now >= _hub_creds_expiry:
+        _hub_creds = _sts.assume_role(RoleArn=HUB_ROLE_ARN, RoleSessionName="spoke-etl")["Credentials"]
+        _hub_creds_expiry = _hub_creds["Expiration"].replace(tzinfo=timezone.utc) - __import__("datetime").timedelta(minutes=10)
+    return boto3.Session(
+        aws_access_key_id=_hub_creds["AccessKeyId"],
+        aws_secret_access_key=_hub_creds["SecretAccessKey"],
+        aws_session_token=_hub_creds["SessionToken"],
     )
-    dynamodb = _hub_session.resource("dynamodb")
-else:
-    dynamodb = boto3.resource("dynamodb")
+
+
+def _get_dynamodb():
+    return _get_hub_session().resource("dynamodb") if HUB_ROLE_ARN else boto3.resource("dynamodb")
+
+
+dynamodb = _get_dynamodb()
 
 USAGE_STATS_TABLE = os.environ["USAGE_STATS_TABLE"]
 PRICING_TABLE = os.environ["MODEL_PRICING_TABLE"]
@@ -43,6 +56,11 @@ _pricing_cache: dict[str, dict] = {}
 
 def handler(event, context):
     """EventBridge S3 event handler."""
+    global dynamodb, usage_stats_table, pricing_table
+    if HUB_ROLE_ARN:
+        dynamodb = _get_dynamodb()
+        usage_stats_table = dynamodb.Table(USAGE_STATS_TABLE)
+        pricing_table = dynamodb.Table(PRICING_TABLE)
     detail = event.get("detail", {})
     bucket = detail.get("bucket", {}).get("name")
     key = detail.get("object", {}).get("key")
@@ -97,6 +115,9 @@ def process_file(bucket, key, path_account_id, path_region):
 def process_record(record, path_account_id, path_region):
     """Process a single invocation log record."""
     model_id = record.get("modelId", "unknown")
+    # Normalize: strip ARN prefix (arn:aws:bedrock:region:account:inference-profile/model → model)
+    if model_id.startswith("arn:"):
+        model_id = model_id.rsplit("/", 1)[-1]
     timestamp_str = record.get("timestamp", "")
     account_id = record.get("accountId", path_account_id)
     region = record.get("region", path_region)
@@ -144,13 +165,13 @@ def process_record(record, path_account_id, path_region):
 
     for dim in dimensions:
         sk = f"HOURLY#{hour_key}#{dim}"
-        update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_ms, ttl_val)
+        update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_ms, output_tokens and latency_ms, ttl_val)
 
     # Auto-register account#region
     register_account(pk)
 
 
-def update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_ms, ttl_val):
+def update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_ms, has_tpot, ttl_val):
     """Atomic update of aggregation record."""
     update_expr = (
         "ADD invocations :one, input_tokens :inp, output_tokens :out, "
@@ -167,6 +188,15 @@ def update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_
     }
     expr_names = {"#ttl": "ttl"}
 
+    # TPOT: approximate latencyMs / outputTokens (includes TTFT)
+    tpot_micro = 0
+    if has_tpot and output_tokens > 0 and latency_ms > 0:
+        tpot_micro = round(latency_ms * 1000 / output_tokens)  # micro-ms for precision
+        update_expr = update_expr.replace("SET ", "SET tpot_count = if_not_exists(tpot_count, :zero) + :one, ")
+        update_expr += ", tpot_sum = if_not_exists(tpot_sum, :zero) + :tpot"
+        expr_values[":tpot"] = tpot_micro
+        expr_values[":zero"] = 0
+
     usage_stats_table.update_item(
         Key={"PK": pk, "SK": sk},
         UpdateExpression=update_expr,
@@ -174,18 +204,24 @@ def update_aggregation(pk, sk, input_tokens, output_tokens, cost_micro, latency_
         ExpressionAttributeNames=expr_names,
     )
 
-    # Conditional max/min latency_ms update (separate calls to avoid complexity)
+    # Conditional max/min latency_ms + tpot update
     if latency_ms > 0:
-        for expr, cond in [
-            ("SET max_latency_ms = :val", "attribute_not_exists(max_latency_ms) OR max_latency_ms < :val"),
-            ("SET min_latency_ms = :val", "attribute_not_exists(min_latency_ms) OR min_latency_ms > :val"),
-        ]:
+        conditionals = [
+            ("SET max_latency_ms = :val", "attribute_not_exists(max_latency_ms) OR max_latency_ms < :val", latency_ms),
+            ("SET min_latency_ms = :val", "attribute_not_exists(min_latency_ms) OR min_latency_ms > :val", latency_ms),
+        ]
+        if tpot_micro > 0:
+            conditionals += [
+                ("SET tpot_max = :val", "attribute_not_exists(tpot_max) OR tpot_max < :val", tpot_micro),
+                ("SET tpot_min = :val", "attribute_not_exists(tpot_min) OR tpot_min > :val", tpot_micro),
+            ]
+        for expr, cond, val in conditionals:
             try:
                 usage_stats_table.update_item(
                     Key={"PK": pk, "SK": sk},
                     UpdateExpression=expr,
                     ConditionExpression=cond,
-                    ExpressionAttributeValues={":val": latency_ms},
+                    ExpressionAttributeValues={":val": val},
                 )
             except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
                 pass
