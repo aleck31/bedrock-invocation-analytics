@@ -176,7 +176,10 @@ def render_dashboard(account_region: str, days: int):
                         "series": [
                             {"name": "Input Tokens", "type": "bar", "data": [m["input_tokens"] for m in models[:15]]},
                             {"name": "Output Tokens", "type": "bar", "data": [m["output_tokens"] for m in models[:15]]},
-                            {"name": "Cost ($)", "type": "bar", "itemStyle": {"color": "#F97316"}, "yAxisIndex": 1, "data": [round(m["cost_usd"], 4) for m in models[:15]]},
+                            {"name": "Cache Read $", "type": "bar", "stack": "cost", "yAxisIndex": 1, "itemStyle": {"color": "#06B6D4"}, "data": [round(m["cost_cache_read"], 4) for m in models[:15]]},
+                            {"name": "Cache Write $", "type": "bar", "stack": "cost", "yAxisIndex": 1, "itemStyle": {"color": "#8B5CF6"}, "data": [round(m["cost_cache_write"], 4) for m in models[:15]]},
+                            {"name": "Input $", "type": "bar", "stack": "cost", "yAxisIndex": 1, "itemStyle": {"color": "#3B82F6"}, "data": [round(m["cost_input"], 4) for m in models[:15]]},
+                            {"name": "Output $", "type": "bar", "stack": "cost", "yAxisIndex": 1, "itemStyle": {"color": "#F97316"}, "data": [round(m["cost_output"], 4) for m in models[:15]]},
                         ],
                     }).classes("w-full h-96")
                 with ui.tab_panel("table"):
@@ -234,7 +237,10 @@ def render_dashboard(account_region: str, days: int):
                         "series": [
                             {"name": "Input Tokens", "type": "bar", "data": [c["input_tokens"] for c in callers[:15]]},
                             {"name": "Output Tokens", "type": "bar", "data": [c["output_tokens"] for c in callers[:15]]},
-                            {"name": "Cost ($)", "type": "bar", "itemStyle": {"color": "#F97316"}, "yAxisIndex": 1, "data": [round(c["cost_usd"], 4) for c in callers[:15]]},
+                            {"name": "Cache Read $", "type": "bar", "stack": "cost", "yAxisIndex": 1, "itemStyle": {"color": "#06B6D4"}, "data": [round(c["cost_cache_read"], 4) for c in callers[:15]]},
+                            {"name": "Cache Write $", "type": "bar", "stack": "cost", "yAxisIndex": 1, "itemStyle": {"color": "#8B5CF6"}, "data": [round(c["cost_cache_write"], 4) for c in callers[:15]]},
+                            {"name": "Input $", "type": "bar", "stack": "cost", "yAxisIndex": 1, "itemStyle": {"color": "#3B82F6"}, "data": [round(c["cost_input"], 4) for c in callers[:15]]},
+                            {"name": "Output $", "type": "bar", "stack": "cost", "yAxisIndex": 1, "itemStyle": {"color": "#F97316"}, "data": [round(c["cost_output"], 4) for c in callers[:15]]},
                         ],
                     }).classes("w-full h-96")
                 with ui.tab_panel("table"):

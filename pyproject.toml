@@ -1,6 +1,6 @@
 [project]
 name = "bedrock-invocation-analytics"
-version = "3.1.6"
+version = "3.2.0"
 description = "Bedrock invocation logging analytics - monitor token usage, costs and performance"
 requires-python = ">=3.13"
 dependencies = [

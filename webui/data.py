@@ -108,10 +108,11 @@ def get_by_model(account_region: str, days: int = 7) -> list[dict]:
     for item in items:
         model = item["dimension"].replace("MODEL#", "")
         if model not in models:
-            models[model] = {"model": model, "invocations": 0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": 0.0, "latency_sum_ms": 0, "max_latency_ms": 0, "min_latency_ms": 0, "tpot_max": 0, "tpot_min": 0, "tpot_sum": 0, "tpot_count": 0}
+            models[model] = {"model": model, "invocations": 0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": 0.0, "cost_input": 0.0, "cost_output": 0.0, "cost_cache_read": 0.0, "cost_cache_write": 0.0, "latency_sum_ms": 0, "max_latency_ms": 0, "min_latency_ms": 0, "tpot_max": 0, "tpot_min": 0, "tpot_sum": 0, "tpot_count": 0}
         for k in ("invocations", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "latency_sum_ms", "tpot_sum", "tpot_count"):
             models[model][k] += item.get(k, 0)
-        models[model]["cost_usd"] += item.get("cost_usd", 0.0)
+        for k in ("cost_usd", "cost_input", "cost_output", "cost_cache_read", "cost_cache_write"):
+            models[model][k] += item.get(k, 0.0)
         models[model]["max_latency_ms"] = max(models[model]["max_latency_ms"], item.get("max_latency_ms", 0))
         models[model]["tpot_max"] = max(models[model]["tpot_max"], item.get("tpot_max", 0))
         for f in ("min_latency_ms", "tpot_min"):
@@ -137,10 +138,11 @@ def get_by_caller(account_region: str, days: int = 7) -> list[dict]:
     for item in items:
         caller = item["dimension"].replace("CALLER#", "")
         if caller not in callers:
-            callers[caller] = {"caller": caller, "invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
+            callers[caller] = {"caller": caller, "invocations": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "cost_input": 0.0, "cost_output": 0.0, "cost_cache_read": 0.0, "cost_cache_write": 0.0}
         for k in ("invocations", "input_tokens", "output_tokens"):
             callers[caller][k] += item.get(k, 0)
-        callers[caller]["cost_usd"] += item.get("cost_usd", 0.0)
+        for k in ("cost_usd", "cost_input", "cost_output", "cost_cache_read", "cost_cache_write"):
+            callers[caller][k] += item.get(k, 0.0)
 
     return sorted(callers.values(), key=lambda x: x["cost_usd"], reverse=True)
 
@@ -281,6 +283,10 @@ def _format_item(item: dict, granularity: str) -> dict:
         "cache_write_tokens": int(item.get("cache_write_tokens", 0)),
         "cost_usd": cost_micro / 1_000_000,
         "cost_micro_usd": cost_micro,
+        "cost_input": int(item.get("cost_input_micro", 0)) / 1_000_000,
+        "cost_output": int(item.get("cost_output_micro", 0)) / 1_000_000,
+        "cost_cache_read": int(item.get("cost_cache_read_micro", 0)) / 1_000_000,
+        "cost_cache_write": int(item.get("cost_cache_write_micro", 0)) / 1_000_000,
         "latency_sum_ms": latency_sum,
         "avg_latency_ms": round(latency_sum / invocations) if invocations else 0,
         "max_latency_ms": int(item.get("max_latency_ms", 0)),

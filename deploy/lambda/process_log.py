@@ -157,13 +157,12 @@ def process_record(record, path_account_id, path_region):
     cache_read_price_micro = pricing.get("cache_read_price_micro", 0)
     cache_write_price_micro = pricing.get("cache_write_price_micro", 0)
 
-    # cost in micro-USD (include cache tokens)
-    cost_micro = (
-        input_tokens * input_price_micro
-        + output_tokens * output_price_micro
-        + cache_read_tokens * cache_read_price_micro
-        + cache_write_tokens * cache_write_price_micro
-    ) // 1000
+    # cost in micro-USD per token type
+    cost_input = input_tokens * input_price_micro // 1000
+    cost_output = output_tokens * output_price_micro // 1000
+    cost_cache_read = cache_read_tokens * cache_read_price_micro // 1000
+    cost_cache_write = cache_write_tokens * cache_write_price_micro // 1000
+    cost_micro = cost_input + cost_output + cost_cache_read + cost_cache_write
 
     pk = f"{account_id}#{region}"
 
@@ -174,20 +173,23 @@ def process_record(record, path_account_id, path_region):
     if caller:
         dimensions.append(f"CALLER#{caller}")
 
+    cost_parts = (cost_input, cost_output, cost_cache_read, cost_cache_write)
     for dim in dimensions:
         sk = f"HOURLY#{hour_key}#{dim}"
-        update_aggregation(pk, sk, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micro, latency_ms, output_tokens and latency_ms, ttl_val)
+        update_aggregation(pk, sk, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micro, cost_parts, latency_ms, output_tokens and latency_ms, ttl_val)
 
     # Auto-register account#region
     register_account(pk)
 
 
-def update_aggregation(pk, sk, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micro, latency_ms, has_tpot, ttl_val):
+def update_aggregation(pk, sk, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_micro, cost_parts, latency_ms, has_tpot, ttl_val):
     """Atomic update of aggregation record."""
+    cost_input, cost_output, cost_cache_read, cost_cache_write = cost_parts
     update_expr = (
         "ADD invocations :one, input_tokens :inp, output_tokens :out, "
         "cache_read_tokens :cr, cache_write_tokens :cw, "
-        "cost_micro_usd :cost, latency_sum_ms :lat "
+        "cost_micro_usd :cost, cost_input_micro :ci, cost_output_micro :co, "
+        "cost_cache_read_micro :ccr, cost_cache_write_micro :ccw, latency_sum_ms :lat "
         "SET #ttl = if_not_exists(#ttl, :ttl)"
     )
     expr_values = {
@@ -197,6 +199,10 @@ def update_aggregation(pk, sk, input_tokens, output_tokens, cache_read_tokens, c
         ":cr": cache_read_tokens,
         ":cw": cache_write_tokens,
         ":cost": cost_micro,
+        ":ci": cost_input,
+        ":co": cost_output,
+        ":ccr": cost_cache_read,
+        ":ccw": cost_cache_write,
         ":lat": latency_ms,
         ":ttl": ttl_val,
     }
