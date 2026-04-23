@@ -48,6 +48,21 @@ def _fetch_ttft(model_id: str, days: int) -> list[dict]:
     return data.get_ttft_trend(model_id, days)
 
 
+def _current_dim(model_sel, caller_sel) -> str:
+    """Resolve the active dimension for a paired model+caller selector.
+
+    Exactly one of the two should be non-TOTAL (enforced by mutual-exclusion
+    handlers). If both are TOTAL → TOTAL. Model takes precedence if somehow both set.
+    """
+    m = (model_sel.value if model_sel else "TOTAL") or "TOTAL"
+    c = (caller_sel.value if caller_sel else "TOTAL") or "TOTAL"
+    if m != "TOTAL":
+        return m
+    if c != "TOTAL":
+        return c
+    return "TOTAL"
+
+
 @ui.page("/")
 def dashboard_page():
     ui.dark_mode(False)
@@ -62,7 +77,8 @@ def dashboard_page():
     refs: dict = {
         "summary_labels": {},   # title → ui.label
         "charts": {},           # name → ui.echart (or list for pies)
-        "model_selects": {},    # name → ui.select
+        "model_selects": {},    # name → ui.select (single-select trend dim)
+        "dim_selectors": {},    # name → (model_select, caller_select) paired selectors
     }
     refreshing = {"flag": False}
     timer_ref: dict = {"timer": None}
@@ -160,6 +176,7 @@ def dashboard_page():
             refs["summary_labels"].clear()
             refs["charts"].clear()
             refs["model_selects"].clear()
+            refs["dim_selectors"].clear()
             content.clear()
             with content:
                 render_dashboard(state["account"], state["days"], dashboard_data, refs)
@@ -181,10 +198,15 @@ def dashboard_page():
             dashboard_data = await asyncio.to_thread(_fetch_dashboard_data, state["account"], state["days"])
 
             trend_data = {}
-            for name in ("usage_trend", "latency_trend"):
-                sel = refs["model_selects"].get(name)
-                dim = sel.value if sel else "TOTAL"
-                trend_data[name] = await asyncio.to_thread(_fetch_trend, state["account"], state["days"], dim)
+            # usage_trend uses paired model+caller selectors
+            pair = refs["dim_selectors"].get("usage_trend")
+            if pair:
+                dim = _current_dim(*pair)
+                trend_data["usage_trend"] = await asyncio.to_thread(_fetch_trend, state["account"], state["days"], dim)
+            # latency_trend still uses a single model selector
+            sel = refs["model_selects"].get("latency_trend")
+            lat_dim = (sel.value if sel else "TOTAL") or "TOTAL"
+            trend_data["latency_trend"] = await asyncio.to_thread(_fetch_trend, state["account"], state["days"], lat_dim)
 
             ttft_sel = refs["model_selects"].get("ttft_trend")
             ttft_model = ttft_sel.value if ttft_sel else ""
@@ -406,9 +428,20 @@ def render_dashboard(account_region: str, days: int, dashboard_data: dict, refs:
                             {"name": "invocations", "label": "Calls", "field": "invocations", "sortable": True},
                             {"name": "input_tokens", "label": "Input Tokens", "field": "input_tokens", "sortable": True},
                             {"name": "output_tokens", "label": "Output Tokens", "field": "output_tokens", "sortable": True},
-                            {"name": "cost", "label": "Cost ($)", "field": "cost", "sortable": True},
+                            {"name": "cost_cache_read", "label": "Cache Read ($)", "field": "cost_cache_read", "sortable": True},
+                            {"name": "cost_cache_write", "label": "Cache Write ($)", "field": "cost_cache_write", "sortable": True},
+                            {"name": "cost_input", "label": "Input ($)", "field": "cost_input", "sortable": True},
+                            {"name": "cost_output", "label": "Output ($)", "field": "cost_output", "sortable": True},
+                            {"name": "cost", "label": "Total ($)", "field": "cost", "sortable": True},
                         ],
-                        rows=[{**m, "cost": round(m["cost_usd"], 4)} for m in models],
+                        rows=[{
+                            **m,
+                            "cost_cache_read": round(m["cost_cache_read"], 4),
+                            "cost_cache_write": round(m["cost_cache_write"], 4),
+                            "cost_input": round(m["cost_input"], 4),
+                            "cost_output": round(m["cost_output"], 4),
+                            "cost": round(m["cost_usd"], 4),
+                        } for m in models],
                     ).classes("w-full")
 
     if callers:
@@ -468,20 +501,33 @@ def render_dashboard(account_region: str, days: int, dashboard_data: dict, refs:
                             {"name": "invocations", "label": "Calls", "field": "invocations", "sortable": True},
                             {"name": "input_tokens", "label": "Input Tokens", "field": "input_tokens", "sortable": True},
                             {"name": "output_tokens", "label": "Output Tokens", "field": "output_tokens", "sortable": True},
-                            {"name": "cost", "label": "Cost ($)", "field": "cost", "sortable": True},
+                            {"name": "cost_cache_read", "label": "Cache Read ($)", "field": "cost_cache_read", "sortable": True},
+                            {"name": "cost_cache_write", "label": "Cache Write ($)", "field": "cost_cache_write", "sortable": True},
+                            {"name": "cost_input", "label": "Input ($)", "field": "cost_input", "sortable": True},
+                            {"name": "cost_output", "label": "Output ($)", "field": "cost_output", "sortable": True},
+                            {"name": "cost", "label": "Total ($)", "field": "cost", "sortable": True},
                         ],
-                        rows=[{**c, "cost": round(c["cost_usd"], 4)} for c in callers],
+                        rows=[{
+                            **c,
+                            "cost_cache_read": round(c["cost_cache_read"], 4),
+                            "cost_cache_write": round(c["cost_cache_write"], 4),
+                            "cost_input": round(c["cost_input"], 4),
+                            "cost_output": round(c["cost_output"], 4),
+                            "cost": round(c["cost_usd"], 4),
+                        } for c in callers],
                     ).classes("w-full")
 
     # ── Usage Trend ──
     if trend_total:
         model_options = {"TOTAL": "All Models"} | {f"MODEL#{m['model']}": m["model"] for m in models} if models else {"TOTAL": "All Models"}
+        caller_options = {"TOTAL": "All Callers"} | {f"CALLER#{c['caller']}": c["caller"] for c in callers} if callers else {"TOTAL": "All Callers"}
 
         with ui.card().classes("w-full p-2"):
             with ui.row().classes("w-full items-center px-2 pt-2"):
                 ui.label("Usage Trend").classes("text-lg font-semibold")
                 ui.space()
                 usage_model_select = ui.select(model_options, value="TOTAL").props("dense outlined").classes("w-48")
+                usage_caller_select = ui.select(caller_options, value="TOTAL").props("dense outlined").classes("w-48")
 
             usage_chart = ui.echart({
                 "tooltip": {"trigger": "axis"},
@@ -498,13 +544,36 @@ def render_dashboard(account_region: str, days: int, dashboard_data: dict, refs:
                 ],
             }).classes("w-full h-80")
             refs["charts"]["usage_trend"] = usage_chart
-            refs["model_selects"]["usage_trend"] = usage_model_select
+            # Pair the two selects; _current_dim() resolves which one is active
+            refs["dim_selectors"]["usage_trend"] = (usage_model_select, usage_caller_select)
 
-            async def on_usage_select_change(_):
-                t = await asyncio.to_thread(_fetch_trend, account_region, days, usage_model_select.value or "TOTAL")
+            usage_syncing = {"flag": False}
+
+            async def on_usage_model_change(_):
+                if usage_syncing["flag"]:
+                    return
+                # Switching model → reset caller to TOTAL (DDB has no MODEL × CALLER cross aggregation)
+                if (usage_model_select.value or "TOTAL") != "TOTAL" and usage_caller_select.value != "TOTAL":
+                    usage_syncing["flag"] = True
+                    usage_caller_select.value = "TOTAL"
+                    usage_syncing["flag"] = False
+                dim = _current_dim(usage_model_select, usage_caller_select)
+                t = await asyncio.to_thread(_fetch_trend, account_region, days, dim)
                 _apply_usage_trend(usage_chart, t)
 
-            usage_model_select.on_value_change(on_usage_select_change)
+            async def on_usage_caller_change(_):
+                if usage_syncing["flag"]:
+                    return
+                if (usage_caller_select.value or "TOTAL") != "TOTAL" and usage_model_select.value != "TOTAL":
+                    usage_syncing["flag"] = True
+                    usage_model_select.value = "TOTAL"
+                    usage_syncing["flag"] = False
+                dim = _current_dim(usage_model_select, usage_caller_select)
+                t = await asyncio.to_thread(_fetch_trend, account_region, days, dim)
+                _apply_usage_trend(usage_chart, t)
+
+            usage_model_select.on_value_change(on_usage_model_change)
+            usage_caller_select.on_value_change(on_usage_caller_change)
 
     # ── Performance ──
     if models:
