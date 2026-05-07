@@ -139,6 +139,17 @@ def process_record(record, path_account_id, path_region):
     cache_read_tokens = inp.get("cacheReadInputTokenCount", 0) or usage.get("cacheReadInputTokens", 0) or 0
     cache_write_tokens = inp.get("cacheWriteInputTokenCount", 0) or usage.get("cacheWriteInputTokens", 0) or 0
 
+    # 1h cache split: Anthropic-native InvokeModel exposes usage.cache_creation.ephemeral_{5m,1h}_input_tokens.
+    # Bedrock's top-level cacheWriteInputTokenCount mixes both TTLs — we need the breakdown for correct pricing.
+    # Converse API only supports 5min cache (cachePoint.type="default") and does not emit this nested block.
+    cache_creation = usage.get("cache_creation") if isinstance(usage, dict) else None
+    if isinstance(cache_creation, dict):
+        cache_write_1h_tokens = cache_creation.get("ephemeral_1h_input_tokens", 0) or 0
+    else:
+        cache_write_1h_tokens = 0
+    # 5min portion = total write - 1h portion (guard against underflow from malformed logs)
+    cache_write_5m_tokens = max(0, cache_write_tokens - cache_write_1h_tokens)
+
     # Caller from identity ARN — extract username/role
     identity = record.get("identity", {}) or {}
     caller_arn = identity.get("arn", "")
@@ -156,12 +167,16 @@ def process_record(record, path_account_id, path_region):
     output_price_micro = pricing.get("output_price_micro", 0)
     cache_read_price_micro = pricing.get("cache_read_price_micro", 0)
     cache_write_price_micro = pricing.get("cache_write_price_micro", 0)
+    cache_write_1h_price_micro = pricing.get("cache_write_1h_price_micro", 0) or cache_write_price_micro
 
-    # cost in micro-USD per token type
+    # cost in micro-USD per token type. Cache write is split by TTL because 1h cache is ~1.6x more expensive.
     cost_input = input_tokens * input_price_micro // 1000
     cost_output = output_tokens * output_price_micro // 1000
     cost_cache_read = cache_read_tokens * cache_read_price_micro // 1000
-    cost_cache_write = cache_write_tokens * cache_write_price_micro // 1000
+    cost_cache_write = (
+        cache_write_5m_tokens * cache_write_price_micro
+        + cache_write_1h_tokens * cache_write_1h_price_micro
+    ) // 1000
     cost_micro = cost_input + cost_output + cost_cache_read + cost_cache_write
 
     pk = f"{account_id}#{region}"
@@ -253,7 +268,7 @@ def get_pricing(model_id, timestamp_str):
     if cache_key in _pricing_cache:
         return _pricing_cache[cache_key]
 
-    result = {"input_price_micro": 0, "output_price_micro": 0, "cache_read_price_micro": 0, "cache_write_price_micro": 0}
+    result = {"input_price_micro": 0, "output_price_micro": 0, "cache_read_price_micro": 0, "cache_write_price_micro": 0, "cache_write_1h_price_micro": 0}
 
     try:
         resp = pricing_table.query(
@@ -269,6 +284,7 @@ def get_pricing(model_id, timestamp_str):
             result["output_price_micro"] = int(float(item.get("output_per_1k", 0)) * 1_000_000)
             result["cache_read_price_micro"] = int(float(item.get("cache_read_per_1k", 0)) * 1_000_000)
             result["cache_write_price_micro"] = int(float(item.get("cache_write_per_1k", 0)) * 1_000_000)
+            result["cache_write_1h_price_micro"] = int(float(item.get("cache_write_1h_per_1k", 0)) * 1_000_000)
     except Exception as e:
         print(f"Pricing lookup failed for {model_id}: {e}")
 

@@ -39,6 +39,7 @@ def extract_bedrock_models(data):
             "output_per_1k": round(output_cost * 1000, 6),
             "cache_read_per_1k": round(info.get("cache_read_input_token_cost", 0) * 1000, 6),
             "cache_write_per_1k": round(info.get("cache_creation_input_token_cost", 0) * 1000, 6),
+            "cache_write_1h_per_1k": round(info.get("cache_creation_input_token_cost_above_1hr", 0) * 1000, 6),
         }
     return models
 
@@ -57,6 +58,7 @@ def seed_table(table_name, models, profile=None):
                 "output_per_1k": str(pricing["output_per_1k"]),
                 "cache_read_per_1k": str(pricing["cache_read_per_1k"]),
                 "cache_write_per_1k": str(pricing["cache_write_per_1k"]),
+                "cache_write_1h_per_1k": str(pricing["cache_write_1h_per_1k"]),
                 "source": "litellm",
             })
     print(f"Seeded {len(models)} models to {table_name}")

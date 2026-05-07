@@ -44,6 +44,7 @@ def handler(event, context):
         new_output = str(round(output_cost * 1000, 6))
         new_cache_read = str(round(info.get("cache_read_input_token_cost", 0) * 1000, 6))
         new_cache_write = str(round(info.get("cache_creation_input_token_cost", 0) * 1000, 6))
+        new_cache_write_1h = str(round(info.get("cache_creation_input_token_cost_above_1hr", 0) * 1000, 6))
 
         # Get current effective price
         resp = pricing_table.query(
@@ -54,7 +55,8 @@ def handler(event, context):
         if items:
             cur = items[0]
             if (cur.get("input_per_1k") == new_input and cur.get("output_per_1k") == new_output
-                    and cur.get("cache_read_per_1k") == new_cache_read and cur.get("cache_write_per_1k") == new_cache_write):
+                    and cur.get("cache_read_per_1k") == new_cache_read and cur.get("cache_write_per_1k") == new_cache_write
+                    and cur.get("cache_write_1h_per_1k") == new_cache_write_1h):
                 skipped += 1
                 continue
 
@@ -65,6 +67,7 @@ def handler(event, context):
             "output_per_1k": new_output,
             "cache_read_per_1k": new_cache_read,
             "cache_write_per_1k": new_cache_write,
+            "cache_write_1h_per_1k": new_cache_write_1h,
             "source": "litellm",
         })
         updated += 1
