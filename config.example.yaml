@@ -4,7 +4,9 @@
 # The account marked 'primary: true' deploys the full stack (DynamoDB, Pricing, Aggregate, WebUI).
 # Other accounts deploy a lightweight spoke stack (S3, Bedrock logging, ETL Lambda → writes to primary DynamoDB).
 
-log_prefix: bedrock/invocation-logs/
+data:
+  bedrock_log_prefix: bedrock/invocation-logs/
+  cost_agg_interval_min: 5        # must be > 1 (Firehose buffer); recommended ≥ 3
 
 # WebUI settings
 webui:
@@ -13,11 +15,13 @@ webui:
 
 accounts:
   - profile: default           # AWS CLI profile name
+    name: myaccount           # friendly name for this account (display in WebUI)
     region: us-west-2
     bucket: ""                 # existing S3 bucket name, or empty to create new
     primary: true              # primary account (only one)
 
   - profile: application
+    name: appaccount
     region: us-east-1
     bucket: ""                 # existing S3 bucket name, or empty to create new
 

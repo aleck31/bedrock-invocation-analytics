@@ -28,7 +28,7 @@ spokes = [a for a in c['accounts'] if not a.get('primary')]
 print(f'PRIMARY_PROFILE=\"{primary[\"profile\"]}\"')
 print(f'PRIMARY_REGION=\"{primary[\"region\"]}\"')
 print(f'PRIMARY_BUCKET=\"{primary.get(\"bucket\",\"\")}\"')
-print(f'LOG_PREFIX=\"{c.get(\"log_prefix\",\"bedrock/invocation-logs/\")}\"')
+print(f'LOG_PREFIX=\"{c.get(\"data\",{}).get(\"bedrock_log_prefix\",\"bedrock/invocation-logs/\")}\"')
 print(f'WEBUI_USER=\"{c.get(\"webui\",{}).get(\"admin_user\",\"\")}\"')
 print(f'WEBUI_PASS=\"{c.get(\"webui\",{}).get(\"admin_pass\",\"\")}\"')
 # Spokes as profile:region:bucket lines
@@ -79,6 +79,33 @@ case "$CMD" in
 
         SPOKE_CTX=""
         [[ -n "$SPOKE_IDS" ]] && SPOKE_CTX="-c spoke_accounts=${SPOKE_IDS}"
+
+        # Pre-flight: ensure Firehose delivery role exists.
+        # This role must be pre-created outside CDK because Firehose does a preflight
+        # glue:GetTable check at CREATE time using the role. If the role is brand-new
+        # (created in the same CFN stack), IAM propagation delay causes the check to fail.
+        # By pre-creating the role here, it's fully propagated before CDK deploy starts.
+        FIREHOSE_ROLE="BedrockInvocationAnalytics-FirehoseDeliveryRole"
+        if ! aws iam get-role --profile "$PRIMARY_PROFILE" --role-name "$FIREHOSE_ROLE" &>/dev/null; then
+            echo "=== Creating Firehose delivery role ==="
+            aws iam create-role --profile "$PRIMARY_PROFILE" \
+                --role-name "$FIREHOSE_ROLE" \
+                --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"firehose.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+            aws iam put-role-policy --profile "$PRIMARY_PROFILE" \
+                --role-name "$FIREHOSE_ROLE" --policy-name delivery \
+                --policy-document "{
+              \"Version\":\"2012-10-17\",
+              \"Statement\":[
+                {\"Sid\":\"GlueCatalog\",\"Effect\":\"Allow\",\"Action\":[\"glue:GetDatabase\",\"glue:GetDatabases\",\"glue:GetTable\",\"glue:GetTables\",\"glue:UpdateTable\"],\"Resource\":[\"arn:aws:glue:${PRIMARY_REGION}:${HUB_ACCOUNT}:catalog\",\"arn:aws:glue:${PRIMARY_REGION}:${HUB_ACCOUNT}:catalog/s3tablescatalog\",\"arn:aws:glue:${PRIMARY_REGION}:${HUB_ACCOUNT}:catalog/s3tablescatalog/*\",\"arn:aws:glue:${PRIMARY_REGION}:${HUB_ACCOUNT}:database/*\",\"arn:aws:glue:${PRIMARY_REGION}:${HUB_ACCOUNT}:table/*/*\"]},
+                {\"Sid\":\"S3Tables\",\"Effect\":\"Allow\",\"Action\":\"s3tables:*\",\"Resource\":[\"arn:aws:s3tables:${PRIMARY_REGION}:${HUB_ACCOUNT}:bucket/*\",\"arn:aws:s3tables:${PRIMARY_REGION}:${HUB_ACCOUNT}:bucket/*/table/*\"]},
+                {\"Sid\":\"LF\",\"Effect\":\"Allow\",\"Action\":\"lakeformation:GetDataAccess\",\"Resource\":\"*\"},
+                {\"Sid\":\"S3Errors\",\"Effect\":\"Allow\",\"Action\":[\"s3:AbortMultipartUpload\",\"s3:GetBucketLocation\",\"s3:GetObject\",\"s3:ListBucket\",\"s3:ListBucketMultipartUploads\",\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::${PRIMARY_BUCKET:-central-logs-${HUB_ACCOUNT}-${PRIMARY_REGION}}\",\"arn:aws:s3:::${PRIMARY_BUCKET:-central-logs-${HUB_ACCOUNT}-${PRIMARY_REGION}}/*\"]},
+                {\"Sid\":\"Logs\",\"Effect\":\"Allow\",\"Action\":\"logs:PutLogEvents\",\"Resource\":\"arn:aws:logs:${PRIMARY_REGION}:${HUB_ACCOUNT}:log-group:/aws/kinesisfirehose/*\"}
+              ]
+            }"
+            echo "=== Waiting 10s for IAM propagation ==="
+            sleep 10
+        fi
 
         run_cdk "$PRIMARY_PROFILE" "$PRIMARY_REGION" deploy \
             -c target=hub $SPOKE_CTX \
@@ -140,5 +167,12 @@ EOF
     *)
         # Raw CDK command (diff, synth, destroy, etc.)
         run_cdk "$PRIMARY_PROFILE" "$PRIMARY_REGION" "$CMD" "$@"
+        # Clean up pre-created Firehose role on destroy
+        if [[ "$CMD" == "destroy" ]]; then
+            ROLE="BedrockInvocationAnalytics-FirehoseDeliveryRole"
+            aws iam delete-role-policy --profile "$PRIMARY_PROFILE" --role-name "$ROLE" --policy-name delivery 2>/dev/null || true
+            aws iam delete-role --profile "$PRIMARY_PROFILE" --role-name "$ROLE" 2>/dev/null || true
+            echo "=== Firehose role cleaned up ==="
+        fi
         ;;
 esac

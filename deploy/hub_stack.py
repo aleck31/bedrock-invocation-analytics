@@ -9,12 +9,19 @@ from aws_cdk import (
     Duration,
     Fn,
     RemovalPolicy,
+    aws_athena as athena,
     aws_dynamodb as dynamodb,
     aws_events as events,
     aws_events_targets as targets,
+    aws_glue as glue,
     aws_iam as iam,
+    aws_kinesisfirehose as firehose,
+    aws_lakeformation as lakeformation,
     aws_lambda as _lambda,
+    aws_logs as logs,
     aws_s3 as s3,
+    aws_s3tables as s3tables,
+    custom_resources as cr,
 )
 from constructs import Construct
 
@@ -51,7 +58,13 @@ def handler(event, context):
 
 
 class HubStack(Stack):
-    def __init__(self, scope: Construct, id: str, **kwargs):
+    # DEDUP marker TTL in the usage-stats table. Fixed: long enough to cover any
+    # retry window we'd reasonably allow, short enough to auto-clean.
+    COST_AGG_DEDUP_TTL_HOURS = 24
+
+    def __init__(self, scope: Construct, id: str,
+                 cost_agg_interval_min: int = 5,
+                 **kwargs):
         super().__init__(scope, id, **kwargs)
 
         # ── Parameters ──
@@ -179,6 +192,208 @@ class HubStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,
         )
 
+        # ── Lake Formation settings: register CDK exec role as LF admin ──
+        # Using the CDK CloudFormation execution role (bootstrap role) — it's only active during deployments, minimizing blast radius.
+        lf_admin_role = iam.Role(self, "LFGrantsRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
+                "service-role/AWSLambdaBasicExecutionRole")],
+            inline_policies={"lf-grants": iam.PolicyDocument(statements=[
+                iam.PolicyStatement(
+                    actions=["lakeformation:GrantPermissions", "lakeformation:RevokePermissions",
+                             "lakeformation:GetDataAccess"],
+                    resources=["*"],
+                ),
+                iam.PolicyStatement(
+                    actions=["glue:GetTable", "glue:GetDatabase", "glue:GetCatalog"],
+                    resources=[f"arn:aws:glue:{self.region}:{self.account}:*"],
+                ),
+                iam.PolicyStatement(
+                    actions=["s3tables:GetTableBucket", "s3tables:GetTable",
+                             "s3tables:GetNamespace", "s3tables:GetTableMetadataLocation"],
+                    resources=[
+                        f"arn:aws:s3tables:{self.region}:{self.account}:bucket/*",
+                        f"arn:aws:s3tables:{self.region}:{self.account}:bucket/*/table/*",
+                    ],
+                ),
+            ])},
+        )
+        cdk_exec_role_arn = (
+            f"arn:aws:iam::{self.account}:role/"
+            f"cdk-hnb659fds-cfn-exec-role-{self.account}-{self.region}"
+        )
+        lf_settings = lakeformation.CfnDataLakeSettings(self, "LFSettings",
+            admins=[
+                # CDK CloudFormation exec role — for general LF ops at deploy time
+                lakeformation.CfnDataLakeSettings.DataLakePrincipalProperty(
+                    data_lake_principal_identifier=cdk_exec_role_arn),
+                # Dedicated role for AwsCustomResource below to call GrantPermissions
+                lakeformation.CfnDataLakeSettings.DataLakePrincipalProperty(
+                    data_lake_principal_identifier=lf_admin_role.role_arn),
+            ],
+        )
+
+        # ── S3 Tables (Iceberg) for L1 usage events ──
+        table_bucket_name = f"bedrock-analytics-{self.account}"
+        table_bucket_arn = f"arn:aws:s3tables:{self.region}:{self.account}:bucket/{table_bucket_name}"
+
+        table_bucket = s3tables.CfnTableBucket(self, "UsageTableBucket",
+            table_bucket_name=table_bucket_name,
+        )
+        table_bucket.apply_removal_policy(RemovalPolicy.RETAIN)
+
+        iceberg_namespace = s3tables.CfnNamespace(self, "IcebergNamespace",
+            namespace="bedrock_analytics",
+            table_bucket_arn=table_bucket_arn,
+        )
+        iceberg_namespace.add_dependency(table_bucket)
+        iceberg_namespace.apply_removal_policy(RemovalPolicy.RETAIN)
+
+        _schema_fields = [
+            (1,  "account_id",              "string",      True),
+            (2,  "region",                  "string",      True),
+            (3,  "request_id",              "string",      True),
+            (4,  "ts",                      "timestamptz", True),
+            (5,  "operation",               "string",      False),
+            (6,  "model_id",                "string",      False),
+            (7,  "caller",                  "string",      False),
+            (8,  "input_tokens",            "long",        False),
+            (9,  "output_tokens",           "long",        False),
+            (10, "cache_read_tokens",       "long",        False),
+            (11, "cache_write_5m_tokens",   "long",        False),
+            (12, "cache_write_1h_tokens",   "long",        False),
+            (13, "cache_write_total_tokens","long",        False),
+            (14, "latency_ms",              "int",         False),
+            (15, "time_to_first_token_ms",  "int",         False),
+            (16, "error_code",              "string",      False),
+            (17, "source_s3_key",           "string",      False),
+            (18, "parsed_at",              "timestamptz", False),
+            (19, "schema_version",          "int",         False),
+        ]
+        usage_events_table = s3tables.CfnTable(self, "UsageEventsTable",
+            table_bucket_arn=table_bucket_arn,
+            namespace="bedrock_analytics",
+            table_name="usage_events",
+            open_table_format="ICEBERG",
+            iceberg_metadata=s3tables.CfnTable.IcebergMetadataProperty(
+                iceberg_schema=s3tables.CfnTable.IcebergSchemaProperty(
+                    schema_field_list=[
+                        s3tables.CfnTable.SchemaFieldProperty(name=n, type=t, required=r)
+                        for (_, n, t, r) in _schema_fields
+                    ],
+                ),
+                iceberg_partition_spec=s3tables.CfnTable.IcebergPartitionSpecProperty(
+                    fields=[
+                        s3tables.CfnTable.IcebergPartitionFieldProperty(source_id=1, transform="identity", name="account_id"),
+                        s3tables.CfnTable.IcebergPartitionFieldProperty(source_id=4, transform="year", name="year"),
+                        s3tables.CfnTable.IcebergPartitionFieldProperty(source_id=4, transform="month", name="month"),
+                        s3tables.CfnTable.IcebergPartitionFieldProperty(source_id=4, transform="day", name="day"),
+                    ],
+                ),
+            ),
+        )
+        usage_events_table.add_dependency(iceberg_namespace)
+        usage_events_table.apply_removal_policy(RemovalPolicy.RETAIN)
+
+        # ── Glue federated catalog for S3 Tables ──
+        iam_allowed_principal = glue.CfnCatalog.PrincipalPermissionsProperty(
+            principal=glue.CfnCatalog.DataLakePrincipalProperty(
+                data_lake_principal_identifier="IAM_ALLOWED_PRINCIPALS"),
+            permissions=["ALL"],
+        )
+        glue_s3tables_catalog = glue.CfnCatalog(self, "GlueS3TablesCatalog",
+            name="s3tablescatalog",
+            federated_catalog=glue.CfnCatalog.FederatedCatalogProperty(
+                identifier=f"arn:aws:s3tables:{self.region}:{self.account}:bucket/*",
+                connection_name="aws:s3tables",
+            ),
+            create_database_default_permissions=[iam_allowed_principal],
+            create_table_default_permissions=[iam_allowed_principal],
+            allow_full_table_external_data_access="True",
+        )
+        glue_s3tables_catalog.add_dependency(table_bucket)
+        glue_s3tables_catalog.apply_removal_policy(RemovalPolicy.RETAIN)
+
+        self.table_bucket_arn = table_bucket_arn
+        self.iceberg_table_name = "usage_events"
+        self.iceberg_namespace = "bedrock_analytics"
+
+        # ── Firehose delivery stream → S3 Tables Iceberg ──
+        # Lambda parse_log puts records here; Firehose buffers (60s / 1MB) then writes to
+        # usage_events with upsert on request_id. S3 error/backup prefix reuses the main
+        # log bucket to avoid a second bucket.
+        firehose_log_group = logs.LogGroup(self, "FirehoseLogGroup",
+            log_group_name=f"/aws/kinesisfirehose/{id}-usage-events",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+        firehose_log_stream = logs.LogStream(self, "FirehoseLogStream",
+            log_group=firehose_log_group,
+            log_stream_name="IcebergDelivery",
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        # Firehose catalog ARN must point to the bucket-level federated sub-catalog.
+        # The 2-level path (catalog/s3tablescatalog) makes Firehose look at the
+        # wrong layer and it can't find the table. CFN validator regex
+        # catalog(?:(/[a-z0-9_-]+){1,2})? allows 1 or 2 segments → 3-level is OK.
+        s3tables_catalog_arn = (
+            f"arn:aws:glue:{self.region}:{self.account}:catalog/s3tablescatalog/"
+            f"bedrock-analytics-{self.account}"
+        )
+
+        # Firehose role — pre-created by deploy.sh to avoid IAM propagation delay.
+        # CDK only references it; deploy.sh manages the role and its policy.
+        firehose_role = iam.Role.from_role_name(self, "FirehoseDeliveryRole",
+            role_name=f"{id}-FirehoseDeliveryRole",
+        )
+
+        # ── LF Grant: give Firehose role access to federated table ──
+        # Without explicit LF grant, Firehose's glue:GetTable preflight check fails.
+        # IAM_ALLOWED_PRINCIPALS doesn't auto-apply to tables federated from S3 Tables.
+        # ── LF Grant: done in deploy.sh pre-deploy step ──
+        # LF grant must be applied by an existing LF admin (wsadmin) before CDK deploy,
+        # because a newly-created LF admin role's permissions don't propagate in time.
+
+        usage_events_stream = firehose.CfnDeliveryStream(self, "UsageEventsFirehose",
+            delivery_stream_name=f"{id}-usage-events",
+            delivery_stream_type="DirectPut",
+            iceberg_destination_configuration=firehose.CfnDeliveryStream.IcebergDestinationConfigurationProperty(
+                role_arn=firehose_role.role_arn,
+                catalog_configuration=firehose.CfnDeliveryStream.CatalogConfigurationProperty(
+                    catalog_arn=s3tables_catalog_arn,
+                ),
+                buffering_hints=firehose.CfnDeliveryStream.BufferingHintsProperty(
+                    interval_in_seconds=60, size_in_m_bs=1,
+                ),
+                cloud_watch_logging_options=firehose.CfnDeliveryStream.CloudWatchLoggingOptionsProperty(
+                    enabled=True,
+                    log_group_name=firehose_log_group.log_group_name,
+                    log_stream_name=firehose_log_stream.log_stream_name,
+                ),
+                destination_table_configuration_list=[
+                    firehose.CfnDeliveryStream.DestinationTableConfigurationProperty(
+                        destination_database_name="bedrock_analytics",
+                        destination_table_name="usage_events",
+                        unique_keys=["request_id"],
+                    ),
+                ],
+                s3_configuration=firehose.CfnDeliveryStream.S3DestinationConfigurationProperty(
+                    bucket_arn=f"arn:aws:s3:::{bucket_name_resolved}",
+                    prefix="firehose-errors/",
+                    role_arn=firehose_role.role_arn,
+                ),
+                s3_backup_mode="FailedDataOnly",
+                append_only=False,  # enable upsert using unique_keys
+            ),
+        )
+        usage_events_stream.add_dependency(lf_settings)
+        usage_events_stream.add_dependency(glue_s3tables_catalog)
+        usage_events_stream.add_dependency(usage_events_table)
+
+        self.usage_events_firehose_name = usage_events_stream.delivery_stream_name
+        self.usage_events_firehose_arn = usage_events_stream.attr_arn
+
         # ── Lambda: Process each new log file ──
         process_log_fn = _lambda.Function(self, "ProcessLogFunction",
             function_name=f"{id}-process-log",
@@ -195,6 +410,108 @@ class HubStack(Stack):
         usage_stats_table.grant_read_write_data(process_log_fn)
         model_pricing_table.grant_read_data(process_log_fn)
 
+        # ── Lambda: V3 L1 parse → Firehose (deployed but not yet wired to S3 trigger) ──
+        parse_log_fn = _lambda.Function(self, "ParseLogFunction",
+            function_name=f"{id}-parse-log",
+            runtime=_lambda.Runtime.PYTHON_3_13,
+            handler="parse_log.handler",
+            code=_lambda.Code.from_asset("lambda"),
+            timeout=Duration.seconds(60), memory_size=256,
+            environment={
+                "FIREHOSE_STREAM": usage_events_stream.delivery_stream_name or "",
+                "HUB_REGION": self.region,
+                "SCHEMA_VERSION": "1",
+            },
+        )
+        bucket.grant_read(parse_log_fn)
+        parse_log_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["firehose:PutRecord", "firehose:PutRecordBatch"],
+            resources=[usage_events_stream.attr_arn],
+        ))
+
+        # ── Athena workgroup + results bucket (for L2 SELECT + ad-hoc queries) ──
+        # Reuse the main log bucket with an athena-results/ prefix.
+        athena_workgroup = athena.CfnWorkGroup(self, "AthenaWorkgroup",
+            name=f"{id}-compute",
+            state="ENABLED",
+            work_group_configuration=athena.CfnWorkGroup.WorkGroupConfigurationProperty(
+                result_configuration=athena.CfnWorkGroup.ResultConfigurationProperty(
+                    output_location=f"s3://{bucket_name_resolved}/athena-results/",
+                ),
+                enforce_work_group_configuration=True,
+                publish_cloud_watch_metrics_enabled=False,
+            ),
+        )
+
+        # ── Lambda: V3 L2 compute_cost (Iceberg → DDB aggregates) ──
+        iceberg_catalog = f"s3tablescatalog/bedrock-analytics-{self.account}"
+        compute_cost_fn = _lambda.Function(self, "ComputeCostFunction",
+            function_name=f"{id}-compute-cost",
+            runtime=_lambda.Runtime.PYTHON_3_13,
+            handler="compute_cost.handler",
+            code=_lambda.Code.from_asset("lambda"),
+            # Athena query poll + paginate results + TransactWriteItems per event
+            timeout=Duration.seconds(300), memory_size=512,
+            environment={
+                "USAGE_STATS_TABLE": usage_stats_table.table_name,
+                "MODEL_PRICING_TABLE": model_pricing_table.table_name,
+                "ATHENA_WORKGROUP": athena_workgroup.name or "",
+                "ATHENA_OUTPUT_S3": f"s3://{bucket_name_resolved}/athena-results/",
+                "ICEBERG_CATALOG": iceberg_catalog,
+                "ICEBERG_DATABASE": "bedrock_analytics",
+                "ICEBERG_TABLE": "usage_events",
+                "WINDOW_MINUTES": str(cost_agg_interval_min),
+                "DEDUP_TTL_HOURS": str(self.COST_AGG_DEDUP_TTL_HOURS),
+            },
+        )
+        usage_stats_table.grant_read_write_data(compute_cost_fn)
+        model_pricing_table.grant_read_data(compute_cost_fn)
+
+        # Athena query permissions + result S3 prefix
+        compute_cost_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=[
+                "athena:StartQueryExecution", "athena:GetQueryExecution",
+                "athena:GetQueryResults", "athena:StopQueryExecution",
+            ],
+            resources=[
+                f"arn:aws:athena:{self.region}:{self.account}:workgroup/{athena_workgroup.name}",
+            ],
+        ))
+        compute_cost_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetBucketLocation", "s3:GetObject", "s3:ListBucket",
+                     "s3:PutObject", "s3:AbortMultipartUpload",
+                     "s3:ListMultipartUploadParts"],
+            resources=[
+                f"arn:aws:s3:::{bucket_name_resolved}",
+                f"arn:aws:s3:::{bucket_name_resolved}/athena-results/*",
+            ],
+        ))
+        # Glue federated catalog read (same ARN format as Firehose role — see comments above)
+        compute_cost_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["glue:GetCatalog", "glue:GetDatabase", "glue:GetTable",
+                     "glue:GetDatabases", "glue:GetTables"],
+            resources=[
+                f"arn:aws:glue:{self.region}:{self.account}:catalog",
+                f"arn:aws:glue:{self.region}:{self.account}:catalog/s3tablescatalog",
+                f"arn:aws:glue:{self.region}:{self.account}:catalog/s3tablescatalog/*",
+                f"arn:aws:glue:{self.region}:{self.account}:database/*",
+                f"arn:aws:glue:{self.region}:{self.account}:table/*/*",
+            ],
+        ))
+        # S3 Tables uses Lake Formation credential vending under the hood
+        compute_cost_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["lakeformation:GetDataAccess"],
+            resources=["*"],
+        ))
+
+        # L2 schedule (EventBridge), deployed but DISABLED until Step 5 cutover
+        l2_schedule = events.Rule(self, "ComputeCostSchedule",
+            rule_name=f"{id}-compute-cost-schedule",
+            schedule=events.Schedule.rate(Duration.minutes(cost_agg_interval_min)),
+            enabled=False,  # enable in Step 5 cutover
+            targets=[targets.LambdaFunction(compute_cost_fn)],
+        )
+
         # ── EventBridge: S3 Object Created → Process Log ──
         events.Rule(self, "NewLogFileTrigger",
             rule_name=f"{id}-new-log-trigger",
@@ -207,6 +524,22 @@ class HubStack(Stack):
                 },
             ),
             targets=[targets.LambdaFunction(process_log_fn)],
+        )
+
+        # V3 L1 trigger (parse_log → Firehose).  Deployed DISABLED.
+        # Step 5 cutover: disable NewLogFileTrigger above, enable this one.
+        events.Rule(self, "NewLogFileTriggerV3",
+            rule_name=f"{id}-new-log-trigger-v3",
+            enabled=False,
+            event_pattern=events.EventPattern(
+                source=["aws.s3"],
+                detail_type=["Object Created"],
+                detail={
+                    "bucket": {"name": [bucket_name_resolved]},
+                    "object": {"key": [{"suffix": ".json.gz"}]},
+                },
+            ),
+            targets=[targets.LambdaFunction(parse_log_fn)],
         )
 
         # ── Lambda: Aggregate hourly→daily→monthly ──
@@ -271,6 +604,11 @@ class HubStack(Stack):
             usage_stats_table.grant_read_write_data(spoke_write_role)
             # Pricing: read only
             model_pricing_table.grant_read_data(spoke_write_role)
+            # Firehose: put records (V3 L1 pipeline)
+            spoke_write_role.add_to_policy(iam.PolicyStatement(
+                actions=["firehose:PutRecord", "firehose:PutRecordBatch"],
+                resources=[usage_events_stream.attr_arn],
+            ))
 
             CfnOutput(self, "SpokeWriteRoleArn", value=spoke_write_role.role_arn)
 
@@ -282,3 +620,10 @@ class HubStack(Stack):
         CfnOutput(self, "ModelPricingTableName", value=model_pricing_table.table_name)
         CfnOutput(self, "ProcessLogFunctionName", value=process_log_fn.function_name)
         CfnOutput(self, "AggregateStatsFunctionName", value=aggregate_stats_fn.function_name)
+        CfnOutput(self, "UsageTableBucketArn", value=table_bucket_arn)
+        CfnOutput(self, "UsageEventsTableArn", value=usage_events_table.attr_table_arn)
+        CfnOutput(self, "UsageEventsFirehoseName", value=usage_events_stream.delivery_stream_name or "")
+        CfnOutput(self, "UsageEventsFirehoseArn", value=usage_events_stream.attr_arn)
+        CfnOutput(self, "ParseLogFunctionName", value=parse_log_fn.function_name)
+        CfnOutput(self, "ComputeCostFunctionName", value=compute_cost_fn.function_name)
+        CfnOutput(self, "AthenaWorkgroupName", value=athena_workgroup.name or "")

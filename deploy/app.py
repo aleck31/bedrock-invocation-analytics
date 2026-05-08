@@ -19,9 +19,11 @@ app = cdk.App()
 target = app.node.try_get_context("target")  # "hub", "spoke:<profile>", "all"
 
 # Hub stack
+data_config = config.get("data") or {}
 if not target or target == "hub" or target == "all":
     HubStack(app, "BedrockInvocationAnalytics",
         env=cdk.Environment(region=primary["region"]),
+        cost_agg_interval_min=int(data_config.get("cost_agg_interval_min", 5)),
     )
 
 # Spoke stacks
@@ -30,6 +32,8 @@ if target and (target.startswith("spoke:") or target == "all"):
     hub_role_arn = f"arn:aws:iam::{hub_account}:role/BedrockAnalytics-SpokeWriteRole"
     usage_table = app.node.try_get_context("usage_table") or "BedrockInvocationAnalytics-usage-stats"
     pricing_table = app.node.try_get_context("pricing_table") or "BedrockInvocationAnalytics-model-pricing"
+    hub_firehose_name = app.node.try_get_context("hub_firehose_name") or "BedrockInvocationAnalytics-usage-events"
+    hub_region = primary["region"]
 
     target_profile = target.split(":")[1] if target.startswith("spoke:") else None
     for s in spokes:
@@ -42,6 +46,8 @@ if target and (target.startswith("spoke:") or target == "all"):
             hub_role_arn=hub_role_arn,
             usage_stats_table=usage_table,
             model_pricing_table=pricing_table,
+            hub_firehose_name=hub_firehose_name,
+            hub_region=hub_region,
         )
 
 app.synth()
