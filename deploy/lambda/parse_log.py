@@ -26,31 +26,37 @@ FIREHOSE_STREAM = os.environ["FIREHOSE_STREAM"]
 HUB_REGION = os.environ.get("HUB_REGION", os.environ.get("AWS_REGION", "us-west-2"))
 SCHEMA_VERSION = 1
 
+from datetime import timedelta
+
 _sts = boto3.client("sts") if HUB_ROLE_ARN else None
-_hub_creds = None
 _hub_creds_expiry = None
-
-
-def _get_hub_session():
-    """Get or refresh cross-account session. STS creds expire after 1h; refresh at 50min."""
-    global _hub_creds, _hub_creds_expiry
-    now = datetime.now(timezone.utc)
-    if _hub_creds is None or now >= _hub_creds_expiry:
-        _hub_creds = _sts.assume_role(RoleArn=HUB_ROLE_ARN, RoleSessionName="spoke-parse-log")["Credentials"]
-        from datetime import timedelta
-        _hub_creds_expiry = _hub_creds["Expiration"].replace(tzinfo=timezone.utc) - timedelta(minutes=10)
-    return boto3.Session(
-        aws_access_key_id=_hub_creds["AccessKeyId"],
-        aws_secret_access_key=_hub_creds["SecretAccessKey"],
-        aws_session_token=_hub_creds["SessionToken"],
-        region_name=HUB_REGION,
-    )
+_firehose_client = None
 
 
 def _get_firehose():
-    if HUB_ROLE_ARN:
-        return _get_hub_session().client("firehose")
-    return boto3.client("firehose", region_name=HUB_REGION)
+    """Return a Firehose client, reusing the cached one while STS creds are fresh.
+    Creating a boto3.Session + client per invocation adds ~30s on cold paths;
+    the spoke path was seeing avg duration 10x hub because of this."""
+    global _firehose_client, _hub_creds_expiry
+    now = datetime.now(timezone.utc)
+
+    if not HUB_ROLE_ARN:
+        # Hub mode — single static client
+        if _firehose_client is None:
+            _firehose_client = boto3.client("firehose", region_name=HUB_REGION)
+        return _firehose_client
+
+    # Spoke mode — refresh when STS creds near expiry
+    if _firehose_client is None or _hub_creds_expiry is None or now >= _hub_creds_expiry:
+        creds = _sts.assume_role(RoleArn=HUB_ROLE_ARN, RoleSessionName="spoke-parse-log")["Credentials"]
+        _hub_creds_expiry = creds["Expiration"].replace(tzinfo=timezone.utc) - timedelta(minutes=10)
+        _firehose_client = boto3.Session(
+            aws_access_key_id=creds["AccessKeyId"],
+            aws_secret_access_key=creds["SecretAccessKey"],
+            aws_session_token=creds["SessionToken"],
+            region_name=HUB_REGION,
+        ).client("firehose")
+    return _firehose_client
 
 
 firehose = _get_firehose()
@@ -59,9 +65,7 @@ firehose = _get_firehose()
 def handler(event, context):
     """EventBridge S3 event handler."""
     global firehose
-    if HUB_ROLE_ARN:
-        # Refresh STS if expired
-        firehose = _get_firehose()
+    firehose = _get_firehose()  # no-op if cached client is still valid
 
     detail = event.get("detail", {})
     bucket = detail.get("bucket", {}).get("name")

@@ -166,6 +166,7 @@ class HubStack(Stack):
         logging_fn = _lambda.Function(self, "BedrockLoggingFunction",
             function_name=f"{id}-bedrock-invocation-setup",
             runtime=_lambda.Runtime.PYTHON_3_13,
+            architecture=_lambda.Architecture.ARM_64,
             handler="index.handler", timeout=Duration.seconds(30),
             role=logging_role,
             code=_lambda.Code.from_inline(BEDROCK_LOGGING_CR_CODE),
@@ -398,6 +399,7 @@ class HubStack(Stack):
         process_log_fn = _lambda.Function(self, "ProcessLogFunction",
             function_name=f"{id}-process-log",
             runtime=_lambda.Runtime.PYTHON_3_13,
+            architecture=_lambda.Architecture.ARM_64,
             handler="process_log.handler",
             code=_lambda.Code.from_asset("lambda"),
             timeout=Duration.seconds(60), memory_size=256,
@@ -414,8 +416,10 @@ class HubStack(Stack):
         parse_log_fn = _lambda.Function(self, "ParseLogFunction",
             function_name=f"{id}-parse-log",
             runtime=_lambda.Runtime.PYTHON_3_13,
+            architecture=_lambda.Architecture.ARM_64,
             handler="parse_log.handler",
             code=_lambda.Code.from_asset("lambda"),
+            # Peak ~112MB after caching the Firehose client; 256MB gives 2x headroom.
             timeout=Duration.seconds(60), memory_size=256,
             environment={
                 "FIREHOSE_STREAM": usage_events_stream.delivery_stream_name or "",
@@ -448,10 +452,12 @@ class HubStack(Stack):
         compute_cost_fn = _lambda.Function(self, "ComputeCostFunction",
             function_name=f"{id}-compute-cost",
             runtime=_lambda.Runtime.PYTHON_3_13,
+            architecture=_lambda.Architecture.ARM_64,
             handler="compute_cost.handler",
             code=_lambda.Code.from_asset("lambda"),
-            # Athena query poll + paginate results + TransactWriteItems per event
-            timeout=Duration.seconds(300), memory_size=512,
+            # Athena query poll + paginate results + TransactWriteItems per event.
+            # Observed peak 96MB; 256MB is plenty.
+            timeout=Duration.seconds(300), memory_size=256,
             environment={
                 "USAGE_STATS_TABLE": usage_stats_table.table_name,
                 "MODEL_PRICING_TABLE": model_pricing_table.table_name,
@@ -556,6 +562,7 @@ class HubStack(Stack):
         aggregate_stats_fn = _lambda.Function(self, "AggregateStatsFunction",
             function_name=f"{id}-aggregate-stats",
             runtime=_lambda.Runtime.PYTHON_3_13,
+            architecture=_lambda.Architecture.ARM_64,
             handler="aggregate_stats.handler",
             code=_lambda.Code.from_asset("lambda"),
             timeout=Duration.seconds(300), memory_size=256,
@@ -578,6 +585,7 @@ class HubStack(Stack):
         sync_pricing_fn = _lambda.Function(self, "SyncPricingFunction",
             function_name=f"{id}-sync-pricing",
             runtime=_lambda.Runtime.PYTHON_3_13,
+            architecture=_lambda.Architecture.ARM_64,
             handler="sync_pricing.handler",
             code=_lambda.Code.from_asset("lambda"),
             timeout=Duration.seconds(120), memory_size=256,

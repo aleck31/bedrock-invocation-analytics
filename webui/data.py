@@ -2,12 +2,21 @@
 
 import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import boto3
+import yaml
 from boto3.dynamodb.conditions import Key
 
 USAGE_TABLE = os.environ.get("USAGE_STATS_TABLE", "BedrockInvocationAnalytics-usage-stats")
 PRICING_TABLE = os.environ.get("MODEL_PRICING_TABLE", "BedrockInvocationAnalytics-model-pricing")
 AWS_REGION = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
+
+# V3 data layer (Iceberg via Athena federated catalog)
+ATHENA_WORKGROUP = os.environ.get("ATHENA_WORKGROUP", "")
+ICEBERG_CATALOG = os.environ.get("ICEBERG_CATALOG", "")
+ICEBERG_DATABASE = os.environ.get("ICEBERG_DATABASE", "bedrock_analytics")
+ICEBERG_TABLE = os.environ.get("ICEBERG_TABLE", "usage_events")
 
 _ddb = boto3.resource("dynamodb", region_name=AWS_REGION)
 _usage = _ddb.Table(USAGE_TABLE)
@@ -38,8 +47,56 @@ def _resolve_granularity(account_region: str, days: int):
     return "HOURLY", start, end
 
 
+def get_l2_checkpoint() -> dict | None:
+    """Read META/L2#latest. Returns None if L2 hasn't run yet (e.g. fresh deploy)."""
+    try:
+        resp = _usage.get_item(Key={"PK": "META", "SK": "L2#latest"})
+    except Exception as e:
+        print(f"[WARN] Failed to read L2 checkpoint: {e}")
+        return None
+    return resp.get("Item")
+
+
+def _load_config_names() -> dict[str, str]:
+    """Map profile → friendly name from config.yaml. Best-effort; returns {} on any failure.
+    Also keyed by account_id once resolved (we can't resolve profile → account_id here, so
+    dashboard falls back to profile name if account_id lookup fails)."""
+    cfg_path = Path(__file__).resolve().parent.parent / "config.yaml"
+    if not cfg_path.exists():
+        return {}
+    try:
+        with open(cfg_path) as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        print(f"[WARN] Failed to read config.yaml: {e}")
+        return {}
+    # Map profile → name. account_id isn't in config.yaml, so dashboard will match
+    # by calling aws sts get-caller-identity at startup (cheap), but for simplicity
+    # we just key by profile and let the caller resolve.
+    return {a["profile"]: a.get("name") or a["profile"]
+            for a in (cfg.get("accounts") or []) if a.get("profile")}
+
+
+def _account_id_to_name() -> dict[str, str]:
+    """Map account_id → friendly name by resolving each config profile via STS.
+    Silent on failures (returns empty map for unresolvable profiles)."""
+    profile_names = _load_config_names()
+    result = {}
+    for profile, name in profile_names.items():
+        try:
+            sess = boto3.Session(profile_name=profile)
+            acct = sess.client("sts").get_caller_identity()["Account"]
+            result[acct] = name
+        except Exception as e:
+            print(f"[WARN] Can't resolve account_id for profile={profile}: {e}")
+    return result
+
+
+_ACCOUNT_NAMES = _account_id_to_name()
+
+
 def get_accounts() -> list[dict]:
-    """Get registered account#region list."""
+    """Get registered account#region list, annotated with config.yaml friendly name."""
     try:
         resp = _usage.query(
             KeyConditionExpression=Key("PK").eq("META") & Key("SK").begins_with("ACCOUNT#"),
@@ -51,7 +108,13 @@ def get_accounts() -> list[dict]:
     for item in resp.get("Items", []):
         acct_region = item["SK"].replace("ACCOUNT#", "")
         parts = acct_region.split("#", 1)
-        results.append({"account_id": parts[0], "region": parts[1] if len(parts) > 1 else "", "key": acct_region})
+        acct_id = parts[0]
+        results.append({
+            "account_id": acct_id,
+            "region": parts[1] if len(parts) > 1 else "",
+            "key": acct_region,
+            "name": _ACCOUNT_NAMES.get(acct_id, ""),
+        })
     return results
 
 

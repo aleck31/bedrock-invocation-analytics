@@ -83,6 +83,7 @@ class SpokeStack(Stack):
         logging_fn = _lambda.Function(self, "BedrockLoggingFunction",
             function_name=f"{id}-bedrock-invocation-setup",
             runtime=_lambda.Runtime.PYTHON_3_13,
+            architecture=_lambda.Architecture.ARM_64,
             handler="index.handler", timeout=Duration.seconds(30),
             role=logging_role,
             code=_lambda.Code.from_inline(BEDROCK_LOGGING_CR_CODE),
@@ -102,6 +103,7 @@ class SpokeStack(Stack):
         process_log_fn = _lambda.Function(self, "ProcessLogFunction",
             function_name=f"{id}-process-log",
             runtime=_lambda.Runtime.PYTHON_3_13,
+            architecture=_lambda.Architecture.ARM_64,
             handler="process_log.handler",
             code=_lambda.Code.from_asset("lambda"),
             timeout=Duration.seconds(60), memory_size=256,
@@ -134,8 +136,10 @@ class SpokeStack(Stack):
             parse_log_fn = _lambda.Function(self, "ParseLogFunction",
                 function_name=f"{id}-parse-log",
                 runtime=_lambda.Runtime.PYTHON_3_13,
+                architecture=_lambda.Architecture.ARM_64,
                 handler="parse_log.handler",
                 code=_lambda.Code.from_asset("lambda"),
+                # Peak ~112MB after caching the Firehose client; 256MB gives 2x headroom.
                 timeout=Duration.seconds(60), memory_size=256,
                 dead_letter_queue=dlq,
                 environment={

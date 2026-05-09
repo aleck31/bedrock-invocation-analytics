@@ -89,7 +89,10 @@ def dashboard_page():
         ui.button(icon="menu", on_click=lambda: drawer.toggle()).props("flat round")
         ui.label("Bedrock Invocation Analytics").classes("text-xl font-bold ml-2")
         ui.space()
-        last_updated_label["label"] = ui.label("").classes("text-xs text-gray-400 mr-3")
+        last_updated_label["label"] = ui.label("").classes("text-xs text-gray-400 mr-3").tooltip(
+            "Latest window processed by L2 compute_cost. Data freshness lags real time "
+            "by ~5-7 min (Firehose buffer + L2 5min schedule)."
+        )
         auto_refresh = ui.select(
             {0: "Off", 10: "10s", 30: "30s", 60: "1min", 300: "5min"},
             value=0, label="Auto",
@@ -128,8 +131,15 @@ def dashboard_page():
         account_ids = sorted(set(a["account_id"] for a in accounts))
         regions = sorted(set(a["region"] for a in accounts))
 
+        # account_id → friendly name from config.yaml (falls back to account_id if no match)
+        account_name_by_id = {a["account_id"]: (a.get("name") or "") for a in accounts}
+
+        def _format(acct_id: str) -> str:
+            name = account_name_by_id.get(acct_id, "")
+            return f"{acct_id} ({name})" if name else acct_id
+
         account_select = ui.select(
-            {a: a for a in account_ids},
+            {a: _format(a) for a in account_ids},
             value=account_ids[0],
             label="Account ID",
         ).classes("w-full")
@@ -146,9 +156,18 @@ def dashboard_page():
             label="Time Range",
         ).classes("w-full mt-2")
 
+        # Serving layer — what this dashboard reads
         ui.input(value=data.USAGE_TABLE, label="Usage Table").props("readonly dense outlined").classes("w-full text-xs")
         ui.input(value=data.PRICING_TABLE, label="Pricing Table").props("readonly dense outlined").classes("w-full mt-2 text-xs")
-        ui.input(value="", label="Athena Workgroup").props("readonly dense outlined").classes("w-full mt-2 text-xs")
+
+        # Source-of-truth layer — for ad-hoc queries
+        ui.separator().classes("my-3")
+        ui.input(value=data.ATHENA_WORKGROUP, label="Athena Workgroup").props("readonly dense outlined").classes("w-full text-xs")
+        iceberg_path = (
+            f"{data.ICEBERG_CATALOG}.{data.ICEBERG_DATABASE}.{data.ICEBERG_TABLE}"
+            if data.ICEBERG_CATALOG else ""
+        )
+        ui.input(value=iceberg_path, label="Iceberg Table").props("readonly dense outlined").classes("w-full mt-2 text-xs")
 
         ui.separator().classes("my-4")
         ui.label(f"Deployed Region: {data.AWS_REGION}").classes("text-xs text-gray-400")
@@ -157,9 +176,24 @@ def dashboard_page():
     content = ui.column().classes("w-full max-w-[1600px] mx-auto p-4 gap-6")
 
     def mark_updated():
+        """Show 'Data up to' from the L2 checkpoint, not the UI refresh time.
+        L2 runs on a schedule (default 5min); data freshness lags UI refresh."""
         lbl = last_updated_label["label"]
-        if lbl is not None:
-            lbl.text = f"Updated: {datetime.now().strftime('%H:%M:%S')}"
+        if lbl is None:
+            return
+        cp = data.get_l2_checkpoint()
+        if not cp:
+            lbl.text = "Data up to: —"
+            return
+        last_window_end = cp.get("last_window_end", "")
+        # last_window_end is ISO UTC, e.g. "2026-05-09T02:55:00+00:00"
+        try:
+            dt_utc = datetime.fromisoformat(last_window_end.replace("Z", "+00:00"))
+            # Show in local time for the dashboard viewer
+            local = dt_utc.astimezone()
+            lbl.text = f"Data up to: {local.strftime('%H:%M')}"
+        except Exception:
+            lbl.text = f"Data up to: {last_window_end}"
 
     async def rebuild():
         """Full DOM rebuild — used when account/region/days change."""
