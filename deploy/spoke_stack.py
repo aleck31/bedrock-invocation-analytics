@@ -14,8 +14,7 @@ from hub_stack import BEDROCK_LOGGING_CR_CODE
 
 class SpokeStack(Stack):
     def __init__(self, scope: Construct, id: str, hub_account: str, hub_role_arn: str,
-                 usage_stats_table: str, model_pricing_table: str,
-                 hub_firehose_name: str = "", hub_region: str = "",
+                 hub_firehose_name: str, hub_region: str,
                  **kwargs):
         super().__init__(scope, id, **kwargs)
 
@@ -93,80 +92,44 @@ class SpokeStack(Stack):
             properties={"BucketName": bucket_name_resolved, "KeyPrefix": log_prefix.value_as_string},
         )
 
-        # ── DLQ ──
+        # ── DLQ for parse_log ──
         dlq = sqs.Queue(self, "ProcessLogDLQ",
             queue_name=f"{id}-process-log-dlq",
             retention_period=Duration.days(14),
         )
 
-        # ── Lambda: Process Log (writes to Hub DynamoDB via assume role) ──
-        process_log_fn = _lambda.Function(self, "ProcessLogFunction",
-            function_name=f"{id}-process-log",
+        # ── V3 L1: parse_log → Hub Firehose ──
+        parse_log_fn = _lambda.Function(self, "ParseLogFunction",
+            function_name=f"{id}-parse-log",
             runtime=_lambda.Runtime.PYTHON_3_13,
             architecture=_lambda.Architecture.ARM_64,
-            handler="process_log.handler",
+            handler="parse_log.handler",
             code=_lambda.Code.from_asset("lambda"),
+            # Peak ~112MB after caching the Firehose client; 256MB gives 2x headroom.
             timeout=Duration.seconds(60), memory_size=256,
             dead_letter_queue=dlq,
             environment={
-                "USAGE_STATS_TABLE": usage_stats_table,
-                "MODEL_PRICING_TABLE": model_pricing_table,
+                "FIREHOSE_STREAM": hub_firehose_name,
                 "HUB_ROLE_ARN": hub_role_arn,
+                "HUB_REGION": hub_region or self.region,
+                "SCHEMA_VERSION": "1",
             },
         )
-        bucket.grant_read(process_log_fn)
-        # Allow Lambda to assume hub's SpokeWriteRole
-        process_log_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["sts:AssumeRole"],
-            resources=[hub_role_arn],
+        bucket.grant_read(parse_log_fn)
+        # Assume hub SpokeWriteRole (role grants firehose:PutRecord* on hub side)
+        parse_log_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["sts:AssumeRole"], resources=[hub_role_arn],
         ))
 
-        # ── EventBridge: S3 Object Created → Process Log ──
         events.Rule(self, "NewLogFileTrigger",
             rule_name=f"{id}-new-log-trigger",
             event_pattern=events.EventPattern(
                 source=["aws.s3"], detail_type=["Object Created"],
                 detail={"bucket": {"name": [bucket_name_resolved]}, "object": {"key": [{"suffix": ".json.gz"}]}},
             ),
-            targets=[targets.LambdaFunction(process_log_fn)],
+            targets=[targets.LambdaFunction(parse_log_fn)],
         )
-
-        # ── V3: Parse Log Lambda → Hub Firehose (deployed but trigger disabled) ──
-        if hub_firehose_name:
-            parse_log_fn = _lambda.Function(self, "ParseLogFunction",
-                function_name=f"{id}-parse-log",
-                runtime=_lambda.Runtime.PYTHON_3_13,
-                architecture=_lambda.Architecture.ARM_64,
-                handler="parse_log.handler",
-                code=_lambda.Code.from_asset("lambda"),
-                # Peak ~112MB after caching the Firehose client; 256MB gives 2x headroom.
-                timeout=Duration.seconds(60), memory_size=256,
-                dead_letter_queue=dlq,
-                environment={
-                    "FIREHOSE_STREAM": hub_firehose_name,
-                    "HUB_ROLE_ARN": hub_role_arn,
-                    "HUB_REGION": hub_region or self.region,
-                    "SCHEMA_VERSION": "1",
-                },
-            )
-            bucket.grant_read(parse_log_fn)
-            # Assume hub SpokeWriteRole (role already grants firehose:PutRecord* on hub side)
-            parse_log_fn.add_to_role_policy(iam.PolicyStatement(
-                actions=["sts:AssumeRole"], resources=[hub_role_arn],
-            ))
-
-            # V3 trigger — disabled until Step 5 cutover
-            events.Rule(self, "NewLogFileTriggerV3",
-                rule_name=f"{id}-new-log-trigger-v3",
-                enabled=False,
-                event_pattern=events.EventPattern(
-                    source=["aws.s3"], detail_type=["Object Created"],
-                    detail={"bucket": {"name": [bucket_name_resolved]}, "object": {"key": [{"suffix": ".json.gz"}]}},
-                ),
-                targets=[targets.LambdaFunction(parse_log_fn)],
-            )
-            CfnOutput(self, "ParseLogFunctionName", value=parse_log_fn.function_name)
 
         # ── Outputs ──
         CfnOutput(self, "BucketName", value=bucket_name_resolved)
-        CfnOutput(self, "ProcessLogFunctionName", value=process_log_fn.function_name)
+        CfnOutput(self, "ParseLogFunctionName", value=parse_log_fn.function_name)

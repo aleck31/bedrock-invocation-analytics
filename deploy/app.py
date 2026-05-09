@@ -30,8 +30,6 @@ if not target or target == "hub" or target == "all":
 if target and (target.startswith("spoke:") or target == "all"):
     hub_account = app.node.try_get_context("hub_account") or ""
     hub_role_arn = f"arn:aws:iam::{hub_account}:role/BedrockAnalytics-SpokeWriteRole"
-    usage_table = app.node.try_get_context("usage_table") or "BedrockInvocationAnalytics-usage-stats"
-    pricing_table = app.node.try_get_context("pricing_table") or "BedrockInvocationAnalytics-model-pricing"
     hub_firehose_name = app.node.try_get_context("hub_firehose_name") or "BedrockInvocationAnalytics-usage-events"
     hub_region = primary["region"]
 
@@ -44,8 +42,6 @@ if target and (target.startswith("spoke:") or target == "all"):
             env=cdk.Environment(region=s["region"]),
             hub_account=hub_account,
             hub_role_arn=hub_role_arn,
-            usage_stats_table=usage_table,
-            model_pricing_table=pricing_table,
             hub_firehose_name=hub_firehose_name,
             hub_region=hub_region,
         )
