@@ -503,6 +503,16 @@ class HubStack(Stack):
             actions=["lakeformation:GetDataAccess"],
             resources=["*"],
         ))
+        # S3 Tables API: Athena needs this to read Iceberg data files.
+        # Same pattern as Firehose delivery role — the exact action list required
+        # is not well documented, so use s3tables:* scoped to this account.
+        compute_cost_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3tables:*"],
+            resources=[
+                f"arn:aws:s3tables:{self.region}:{self.account}:bucket/*",
+                f"arn:aws:s3tables:{self.region}:{self.account}:bucket/*/table/*",
+            ],
+        ))
 
         # L2 schedule (EventBridge), deployed but DISABLED until Step 5 cutover
         l2_schedule = events.Rule(self, "ComputeCostSchedule",

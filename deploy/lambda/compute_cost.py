@@ -157,13 +157,16 @@ def aggregate_event(ev):
         cache_write_1h = 0
     latency_ms = _int(ev.get("latency_ms"))
 
-    hour_key = ts_str[:13]  # "YYYY-MM-DDTHH"
-    if len(hour_key) != 13:
+    # Athena returns TIMESTAMP as "YYYY-MM-DD HH:MM:SS[.ffffff] [TZ]" (space, not T).
+    # Normalize to ISO so hour_key and pricing lookup match the rest of the stack.
+    iso_ts = _athena_ts_to_iso(ts_str)
+    if not iso_ts:
         print(f"Bad ts {ts_str} for {request_id}")
         return False
+    hour_key = iso_ts[:13]  # "YYYY-MM-DDTHH"
 
-    # Pricing lookup
-    pricing = get_pricing(model_id, ts_str)
+    # Pricing lookup (expects ISO timestamp so SK range compare works)
+    pricing = get_pricing(model_id, iso_ts)
 
     # Cost in micro-USD (matches V2 semantics — micro-USD per 1k tokens)
     cost_input = input_tokens * pricing["input"] // 1000
@@ -328,6 +331,20 @@ def write_checkpoint(window_end, processed_at, processed, skipped_dup, errors):
         "events_skipped_dup": skipped_dup,
         "events_errors": errors,
     })
+
+
+def _athena_ts_to_iso(ts_str):
+    """Convert Athena TIMESTAMP string 'YYYY-MM-DD HH:MM:SS[.fff] [TZ]' to ISO
+    'YYYY-MM-DDTHH:MM:SS' (UTC assumed). Returns None on failure."""
+    if not ts_str:
+        return None
+    try:
+        # Drop fractional seconds / timezone suffix, replace space with T
+        head = ts_str.split(".", 1)[0].split("+", 1)[0].split(" UTC", 1)[0]
+        # Now head is "YYYY-MM-DD HH:MM:SS" (with space)
+        return head.replace(" ", "T", 1)
+    except Exception:
+        return None
 
 
 def _int(v):
