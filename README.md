@@ -54,6 +54,11 @@ Real-time analytics for Amazon Bedrock — monitor token usage, costs, and perfo
 
 Two-stage pipeline: **L1** (parse) turns every Bedrock call into a structured event in an Iceberg table; **L2** (compute) rolls those events up by pricing into DynamoDB for the dashboard to read.
 
+![Architecture](docs/architecture-v3.png)
+
+<details>
+<summary>ASCII version (for AI/text access)</summary>
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ Primary Account (Hub)                                                        │
@@ -87,6 +92,7 @@ Two-stage pipeline: **L1** (parse) turns every Bedrock call into a structured ev
 │  (Bedrock)                                                                   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
+</details>
 
 **How it works:**
 

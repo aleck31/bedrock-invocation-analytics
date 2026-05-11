@@ -66,7 +66,7 @@ def login_page(redirect_to: str = "/") -> RedirectResponse | None:
 
 ui.run(
     title="Bedrock Invocation Analytics",
-    favicon="docs/favicon.svg",
+    favicon="webui/favicon.svg",
     port=int(os.environ.get("PORT", "8060")),
     reload=False,
     storage_secret=os.environ.get("STORAGE_SECRET", "bedrock-analytics-secret-change-me"),
